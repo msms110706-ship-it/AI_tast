@@ -70,6 +70,61 @@ function makePlan({ subject, examDate, range, days, minutes }) {
   });
 }
 
+function getStudyHelp(subject, range) {
+  const text = `${subject} ${range}`.toLowerCase();
+
+  if (text.includes("확률")) {
+    return {
+      title: "확률은 ‘경우의 수’부터",
+      tip: "전체 경우가 모두 같은 가능성을 가질 때, 확률은 ‘원하는 경우의 수 ÷ 전체 경우의 수’예요. 문제를 읽자마자 분모가 될 전체 경우부터 적어보세요.",
+      questions: [
+        "주사위 한 개를 던질 때 3의 배수가 나올 확률은?",
+        "동전 두 개를 동시에 던질 때 앞면이 정확히 하나 나올 확률은?",
+        "1부터 10까지 중 하나를 고를 때 소수가 나올 확률은?"
+      ]
+    };
+  }
+  if (text.includes("수학")) {
+    return {
+      title: "답보다 풀이의 흐름을 남기기",
+      tip: "틀린 문제는 정답만 고치지 말고 ‘어디에서 생각이 끊겼는지’를 한 줄로 적어두세요. 비슷한 문제를 다시 만났을 때 훨씬 빨리 알아챌 수 있어요.",
+      questions: ["이 단원의 핵심 공식을 말로 설명할 수 있나요?", "가장 자주 틀리는 계산은 무엇인가요?", "오늘 푼 문제 중 하나를 풀이 없이 다시 풀 수 있나요?"]
+    };
+  }
+  if (text.includes("영어")) {
+    return {
+      title: "읽고, 가리고, 말하기",
+      tip: "단어나 문장을 눈으로만 반복하지 말고 뜻을 가린 뒤 소리 내어 떠올려 보세요. 기억에서 직접 꺼내는 연습이 오래 남습니다.",
+      questions: ["오늘 배운 단어 5개로 문장을 만들 수 있나요?", "지문의 핵심 내용을 한 문장으로 말해보세요.", "헷갈린 문법을 예문으로 설명할 수 있나요?"]
+    };
+  }
+  if (text.includes("역사") || text.includes("한국사")) {
+    return {
+      title: "사건을 앞뒤로 연결하기",
+      tip: "연도만 외우기보다 ‘원인 → 사건 → 결과’를 화살표로 연결하세요. 인물과 제도도 이 흐름 안에 놓으면 암기가 쉬워져요.",
+      questions: ["오늘 배운 사건의 원인은 무엇인가요?", "그 사건 이후 가장 크게 달라진 점은?", "비슷한 시기의 다른 사건과 연결할 수 있나요?"]
+    };
+  }
+  if (text.includes("과학")) {
+    return {
+      title: "현상을 내 말로 설명하기",
+      tip: "개념을 외운 뒤 책을 덮고 실제 현상에 빗대어 설명해 보세요. 그림을 직접 그려 보는 것도 효과적이에요.",
+      questions: ["이 현상이 일어나는 순서를 설명할 수 있나요?", "조건 하나가 바뀌면 결과는 어떻게 될까요?", "오늘 개념을 보여주는 일상 속 사례는?"]
+    };
+  }
+  return {
+    title: "기억에서 꺼내는 공부",
+    tip: "읽는 시간을 줄이고, 책을 덮은 채 방금 배운 내용을 종이에 적어보세요. 기억나지 않는 부분이 오늘 다시 볼 곳입니다.",
+    questions: ["오늘 배운 핵심을 세 문장으로 요약하면?", "가장 헷갈리는 개념은 무엇인가요?", "시험에 나온다면 어떤 문제로 나올까요?"]
+  };
+}
+
+function formatTimer(seconds) {
+  const minute = String(Math.floor(seconds / 60)).padStart(2, "0");
+  const second = String(seconds % 60).padStart(2, "0");
+  return `${minute}:${second}`;
+}
+
 export default function Home() {
   const defaultExam = useMemo(() => localDateString(addDays(new Date(), 14)), []);
   const [subject, setSubject] = useState("한국사");
@@ -78,23 +133,71 @@ export default function Home() {
   const [minutes, setMinutes] = useState(60);
   const [days, setDays] = useState(DEFAULT_DAYS);
   const [plan, setPlan] = useState([]);
+  const [plans, setPlans] = useState([]);
+  const [currentPlanId, setCurrentPlanId] = useState(null);
   const [view, setView] = useState("form");
   const [error, setError] = useState("");
+  const [timerSeconds, setTimerSeconds] = useState(25 * 60);
+  const [timerRunning, setTimerRunning] = useState(false);
+  const [timerMode, setTimerMode] = useState(25);
+  const [questionIndex, setQuestionIndex] = useState(0);
 
   useEffect(() => {
-    const saved = localStorage.getItem("study-flow-plan");
+    const saved = localStorage.getItem("study-flow-plans");
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        setPlan(parsed);
-        if (parsed.length) setView("plan");
+        setPlans(parsed);
+        if (parsed.length) {
+          const latest = parsed[0];
+          setPlan(latest.items);
+          setCurrentPlanId(latest.id);
+          setSubject(latest.subject);
+          setRange(latest.range);
+          setExamDate(latest.examDate);
+          setView("plan");
+        }
       } catch {}
+    } else {
+      const legacy = localStorage.getItem("study-flow-plan");
+      if (legacy) {
+        try {
+          const items = JSON.parse(legacy);
+          if (items.length) {
+            const migrated = { id: `plan-${Date.now()}`, name: "계획 1", subject: items[0]?.subject || "시험 공부", range: "이전에 저장한 범위", examDate: "", createdAt: new Date().toISOString(), items };
+            setPlans([migrated]);
+            setPlan(items);
+            setCurrentPlanId(migrated.id);
+            setView("plan");
+          }
+        } catch {}
+      }
     }
   }, []);
 
   useEffect(() => {
-    if (plan.length) localStorage.setItem("study-flow-plan", JSON.stringify(plan));
-  }, [plan]);
+    if (plans.length) localStorage.setItem("study-flow-plans", JSON.stringify(plans));
+    else localStorage.removeItem("study-flow-plans");
+  }, [plans]);
+
+  useEffect(() => {
+    if (!currentPlanId || !plan.length) return;
+    setPlans((current) => current.map((savedPlan) => savedPlan.id === currentPlanId ? { ...savedPlan, items: plan } : savedPlan));
+  }, [plan, currentPlanId]);
+
+  useEffect(() => {
+    if (!timerRunning) return;
+    const timer = setInterval(() => {
+      setTimerSeconds((seconds) => {
+        if (seconds <= 1) {
+          setTimerRunning(false);
+          return 0;
+        }
+        return seconds - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [timerRunning]);
 
   const createPlan = (event) => {
     event.preventDefault();
@@ -117,8 +220,49 @@ export default function Home() {
       return;
     }
     setError("");
+    const id = `plan-${Date.now()}`;
+    const savedPlan = {
+      id,
+      name: `계획 ${plans.length + 1}`,
+      subject: subject.trim() || "시험 공부",
+      range: range.trim(),
+      examDate,
+      createdAt: new Date().toISOString(),
+      items: nextPlan,
+    };
     setPlan(nextPlan);
+    setPlans((current) => [savedPlan, ...current]);
+    setCurrentPlanId(id);
     setView("plan");
+  };
+
+  const openPlan = (savedPlan) => {
+    setCurrentPlanId(savedPlan.id);
+    setPlan(savedPlan.items);
+    setSubject(savedPlan.subject);
+    setRange(savedPlan.range);
+    setExamDate(savedPlan.examDate);
+    setView("plan");
+  };
+
+  const deletePlan = (id) => {
+    if (!window.confirm("이 계획을 보관함에서 삭제할까요?")) return;
+    const next = plans.filter((savedPlan) => savedPlan.id !== id);
+    setPlans(next);
+    if (currentPlanId === id) {
+      if (next.length) openPlan(next[0]);
+      else {
+        setPlan([]);
+        setCurrentPlanId(null);
+        setView("form");
+      }
+    }
+  };
+
+  const changeTimer = (value) => {
+    setTimerMode(value);
+    setTimerSeconds(value * 60);
+    setTimerRunning(false);
   };
 
   const toggleDay = (day) => {
@@ -131,6 +275,8 @@ export default function Home() {
 
   const doneCount = plan.filter((item) => item.done).length;
   const progress = plan.length ? Math.round((doneCount / plan.length) * 100) : 0;
+  const activePlan = plans.find((savedPlan) => savedPlan.id === currentPlanId);
+  const studyHelp = getStudyHelp(activePlan?.subject || subject, activePlan?.range || range);
 
   return (
     <main>
@@ -140,11 +286,10 @@ export default function Home() {
         </button>
         <div className="nav-right">
           <span>오늘부터, 차근차근.</span>
-          {plan.length > 0 && (
-            <button className="ghost-button" onClick={() => setView(view === "form" ? "plan" : "form")}>
-              {view === "form" ? "내 계획 보기" : "새 계획 만들기"}
-            </button>
-          )}
+          <button className="nav-link" onClick={() => setView("library")}>
+            계획 보관함 <b>{plans.length}</b>
+          </button>
+          <button className="ghost-button" onClick={() => setView("form")}>+ 새 계획</button>
         </div>
       </nav>
 
@@ -208,15 +353,56 @@ export default function Home() {
             <p className="privacy">입력한 정보는 이 기기에만 저장돼요.</p>
           </form>
         </section>
+      ) : view === "library" ? (
+        <section className="library-shell">
+          <header className="library-header">
+            <div>
+              <p className="eyebrow">PLAN ARCHIVE</p>
+              <h1>나의 계획 보관함</h1>
+              <p>만들었던 계획을 언제든 다시 열어 이어서 공부하세요.</p>
+            </div>
+            <button className="primary-button compact" onClick={() => setView("form")}>+ 새 계획 만들기</button>
+          </header>
+
+          {plans.length ? (
+            <div className="library-grid">
+              {plans.map((savedPlan) => {
+                const completed = savedPlan.items.filter((item) => item.done).length;
+                const savedProgress = Math.round((completed / savedPlan.items.length) * 100);
+                return (
+                  <article className="library-card" key={savedPlan.id}>
+                    <div className="library-number">{savedPlan.name}</div>
+                    <span className="subject-chip">{savedPlan.subject}</span>
+                    <h2>{savedPlan.range}</h2>
+                    <p>시험일 {savedPlan.examDate || "날짜 정보 없음"} · 총 {savedPlan.items.length}회</p>
+                    <div className="mini-progress"><i style={{ width: `${savedProgress}%` }} /></div>
+                    <div className="library-meta"><strong>{savedProgress}% 완료</strong><span>{completed}/{savedPlan.items.length}</span></div>
+                    <div className="library-actions">
+                      <button onClick={() => openPlan(savedPlan)}>계획 열기 <span>→</span></button>
+                      <button className="delete-button" onClick={() => deletePlan(savedPlan.id)}>삭제</button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="empty-library">
+              <span>✦</span>
+              <h2>아직 저장한 계획이 없어요.</h2>
+              <p>첫 계획을 만들면 이곳에 자동으로 보관됩니다.</p>
+              <button className="primary-button compact" onClick={() => setView("form")}>첫 계획 만들기</button>
+            </div>
+          )}
+        </section>
       ) : (
         <section className="result-shell">
           <header className="result-header">
             <div>
-              <p className="eyebrow">MY STUDY PLAN</p>
+              <p className="eyebrow">MY STUDY PLAN · {activePlan?.name || "현재 계획"}</p>
               <h1><em>{plan[0]?.subject}</em>, 오늘부터 시작!</h1>
               <p>{plan.length}번의 공부로 시험 준비를 끝내요.</p>
             </div>
-            <button className="primary-button compact" onClick={() => setView("form")}>계획 다시 짜기</button>
+            <button className="primary-button compact" onClick={() => setView("library")}>보관함 보기</button>
           </header>
 
           <div className="progress-card">
@@ -228,6 +414,46 @@ export default function Home() {
             <p>{progress === 100 ? "완주했어요! 시험 잘 보고 오세요 ✦" : "체크할 때마다 목표에 한 걸음 가까워져요."}</p>
           </div>
 
+          <div className="study-tools">
+            <article className="timer-card">
+              <div className="tool-heading">
+                <div><span>FOCUS TIMER</span><h2>지금, 딱 집중하기</h2></div>
+                <i className={timerRunning ? "pulse active" : "pulse"} />
+              </div>
+              <div className="timer-modes">
+                {[25, 50, 10].map((value) => (
+                  <button className={timerMode === value ? "active" : ""} key={value} onClick={() => changeTimer(value)}>
+                    {value === 10 ? "휴식 10분" : `집중 ${value}분`}
+                  </button>
+                ))}
+              </div>
+              <div className="timer-display">{formatTimer(timerSeconds)}</div>
+              <div className="timer-actions">
+                <button className="timer-main" onClick={() => timerSeconds > 0 && setTimerRunning((running) => !running)}>
+                  {timerRunning ? "잠시 멈춤" : timerSeconds === 0 ? "시간 종료" : "시작하기"}
+                </button>
+                <button onClick={() => changeTimer(timerMode)}>초기화</button>
+              </div>
+            </article>
+
+            <article className="help-card">
+              <div className="tool-heading">
+                <div><span>STUDY COACH</span><h2>{studyHelp.title}</h2></div>
+                <b>TIP</b>
+              </div>
+              <p className="tip-copy">{studyHelp.tip}</p>
+              <div className="question-box">
+                <span>오늘의 셀프 질문</span>
+                <strong>{studyHelp.questions[questionIndex % studyHelp.questions.length]}</strong>
+              </div>
+              <button className="question-button" onClick={() => setQuestionIndex((index) => index + 1)}>다른 질문 받기 ↻</button>
+            </article>
+          </div>
+
+          <div className="list-heading">
+            <div><span>CHECKLIST</span><h2>공부 일정</h2></div>
+            <p>완료한 날을 체크해 보세요.</p>
+          </div>
           <div className="plan-list">
             {plan.map((item, index) => (
               <article className={`plan-item ${item.done ? "done" : ""}`} key={item.id}>
