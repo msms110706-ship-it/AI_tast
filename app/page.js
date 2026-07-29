@@ -148,6 +148,8 @@ export default function Home() {
   const [answer, setAnswer] = useState("");
   const [sharedPlans, setSharedPlans] = useState([]);
   const [communityGrade, setCommunityGrade] = useState("전체");
+  const [contactStatus, setContactStatus] = useState("idle");
+  const [contactMessage, setContactMessage] = useState("");
 
   useEffect(() => {
     const savedUser = localStorage.getItem("study-flow-user");
@@ -331,6 +333,28 @@ export default function Home() {
     );
   };
 
+  const submitContact = async (event) => {
+    event.preventDefault();
+    setContactStatus("sending");
+    setContactMessage("");
+
+    try {
+      const response = await fetch("https://formspree.io/f/xbdnbrka", {
+        method: "POST",
+        body: new FormData(event.currentTarget),
+        headers: { Accept: "application/json" },
+      });
+
+      if (!response.ok) throw new Error("Formspree request failed");
+      event.currentTarget.reset();
+      setContactStatus("success");
+      setContactMessage("문의가 잘 접수됐어요. 확인 후 입력하신 이메일로 연락드릴게요.");
+    } catch {
+      setContactStatus("error");
+      setContactMessage("전송에 실패했어요. 잠시 후 다시 시도해주세요.");
+    }
+  };
+
   const doneCount = plan.filter((item) => item.done).length;
   const progress = plan.length ? Math.round((doneCount / plan.length) * 100) : 0;
   const activePlan = plans.find((savedPlan) => savedPlan.id === currentPlanId);
@@ -342,7 +366,71 @@ export default function Home() {
     ...sharedPlans,
   ].filter((item) => communityGrade === "전체" || item.grade === communityGrade);
 
-  if (!user) {
+  const contactPage = (
+    <section className="contact-shell">
+      <div className="contact-copy">
+        <button className="back-link" type="button" onClick={() => setView(user ? "form" : "form")}>← 돌아가기</button>
+        <p className="eyebrow">PARTNERSHIP · CONTACT</p>
+        <h1>함께 만들<br />공부의 <em>다음.</em></h1>
+        <p className="description">
+          공부하자!와 함께할 아이디어가 있나요?<br />
+          제휴, 콘텐츠, 교육기관 협업 제안을 기다립니다.
+        </p>
+        <div className="contact-note">
+          <span>01</span>
+          <p><strong>영업일 기준 2–3일 이내</strong><br />담당자가 이메일로 답변드려요.</p>
+        </div>
+      </div>
+
+      <form className="planner-card contact-form" onSubmit={submitContact}>
+        <div className="card-heading">
+          <span>제휴 문의</span>
+          <span className="step">LET&apos;S TALK</span>
+        </div>
+        <div className="contact-row">
+          <label>
+            <span>회사·기관명</span>
+            <input name="company" placeholder="예: 공부교육" required />
+          </label>
+          <label>
+            <span>담당자명</span>
+            <input name="name" placeholder="홍길동" required />
+          </label>
+        </div>
+        <label>
+          <span>회신 이메일</span>
+          <input type="email" name="email" placeholder="hello@company.com" required />
+        </label>
+        <label>
+          <span>제휴 유형</span>
+          <select name="partnership_type" defaultValue="" required>
+            <option value="" disabled>제휴 유형을 선택해주세요</option>
+            <option value="교육기관 제휴">교육기관 제휴</option>
+            <option value="콘텐츠 협업">콘텐츠 협업</option>
+            <option value="브랜드·마케팅">브랜드·마케팅</option>
+            <option value="기술·서비스 연동">기술·서비스 연동</option>
+            <option value="기타">기타</option>
+          </select>
+        </label>
+        <label>
+          <span>문의 내용</span>
+          <textarea name="message" rows="6" placeholder="제안 배경과 함께하고 싶은 내용을 간단히 적어주세요." required />
+        </label>
+        <label className="consent-field">
+          <input type="checkbox" name="privacy_consent" value="동의" required />
+          <span>문의 답변을 위한 개인정보 수집·이용에 동의합니다.</span>
+        </label>
+        <input type="hidden" name="_subject" value="[공부하자!] 새로운 제휴 문의" />
+        {contactMessage && <p className={`form-status ${contactStatus}`} role="status">{contactMessage}</p>}
+        <button className="primary-button" type="submit" disabled={contactStatus === "sending"}>
+          {contactStatus === "sending" ? "보내는 중..." : "문의 보내기"} <span>→</span>
+        </button>
+        <p className="privacy">입력하신 정보는 문의 답변 목적으로만 사용됩니다.</p>
+      </form>
+    </section>
+  );
+
+  if (!user && view !== "contact") {
     return (
       <main className="auth-page">
         <section className="auth-copy">
@@ -357,9 +445,14 @@ export default function Home() {
           <label><span>현재 학년</span><select value={grade} onChange={(event) => setGrade(event.target.value)}>{["초4","초5","초6","중1","중2","중3","고1","고2","고3"].map((item) => <option key={item}>{item}</option>)}</select></label>
           <button className="primary-button" type="submit">내 공부방 들어가기 <span>→</span></button>
           <p className="privacy">체험용 로컬 프로필 · 비밀번호이나 개인정보를 받지 않아요.</p>
+          <button className="contact-entry" type="button" onClick={() => setView("contact")}>제휴 문의하기 →</button>
         </form>
       </main>
     );
+  }
+
+  if (!user && view === "contact") {
+    return <main>{contactPage}</main>;
   }
 
   return (
@@ -371,6 +464,7 @@ export default function Home() {
         <div className="nav-right">
           <button className="user-badge" onClick={logout}>{user.grade} · {user.name} <small>로그아웃</small></button>
           <button className="nav-link" onClick={() => setView("community")}>계획 둘러보기</button>
+          <button className="nav-link contact-nav" onClick={() => setView("contact")}>제휴 문의</button>
           <button className="nav-link" onClick={() => setView("library")}>
             계획 보관함 <b>{plans.length}</b>
           </button>
@@ -378,7 +472,7 @@ export default function Home() {
         </div>
       </nav>
 
-      {view === "form" ? (
+      {view === "contact" ? contactPage : view === "form" ? (
         <section className="planner-shell">
           <div className="intro">
             <p className="eyebrow">STUDY PLANNER · 01</p>
@@ -602,6 +696,7 @@ export default function Home() {
 
       <footer>
         <span>공부하자!</span>
+        <button type="button" onClick={() => setView("contact")}>제휴 문의</button>
         <p>완벽한 계획보다, 오늘의 한 걸음.</p>
       </footer>
     </main>
