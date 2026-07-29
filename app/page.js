@@ -161,6 +161,109 @@ function getStudyHelp(subject, range) {
   };
 }
 
+function inferQuestionSubject(question, selectedSubject) {
+  const text = question.toLowerCase();
+  if (/(수학|공식|방정식|함수|확률|도형|각도|넓이|부피|기울기|제곱|근의 공식|피타고라스)/.test(text)) return "수학";
+  if (/(역사|한국사|세계사|왕|대통령|장군|독립운동|전쟁|조선|고려|신라|백제|고구려|인물|업적)/.test(text)) return "역사";
+  if (/(과학|물리|화학|생물|지구과학|원소|분자|세포|힘|에너지|전류|행성|광합성|유전)/.test(text)) return "과학";
+  if (/(영어|문법|단어|동사|명사|형용사|시제|영작|해석)/.test(text)) return "영어";
+  if (/(국어|문학|소설|시인|작가|문법|품사|주제|비유)/.test(text)) return "국어";
+  return selectedSubject || "일반";
+}
+
+function getQuestionPlaceholder(selectedSubject) {
+  const subjectText = selectedSubject.toLowerCase();
+  if (subjectText.includes("수학") || subjectText.includes("확률")) return "예: 이차방정식의 근의 공식을 알려줘";
+  if (subjectText.includes("역사") || subjectText.includes("한국사")) return "예: 세종대왕의 주요 업적은 무엇인가요?";
+  if (subjectText.includes("과학")) return "예: 광합성은 어떤 원리로 일어나나요?";
+  if (subjectText.includes("영어")) return "예: 현재완료와 과거시제의 차이는?";
+  if (subjectText.includes("국어")) return "예: 직유법과 은유법의 차이는?";
+  return `예: ${selectedSubject || "이 과목"}의 핵심 개념을 설명해줘`;
+}
+
+function getMathFormulaAnswer(question) {
+  const text = question.replace(/\s+/g, "");
+  const formulas = [
+    {
+      match: /피타고라스/,
+      answer: "피타고라스 정리\n\n직각삼각형에서 빗변의 길이를 c, 나머지 두 변의 길이를 a, b라고 하면\n\n a² + b² = c²\n\n이 공식은 반드시 직각삼각형에서만 사용할 수 있어요. 예를 들어 두 직각변이 3과 4라면 c² = 3² + 4² = 25이므로 빗변 c는 5입니다.",
+    },
+    {
+      match: /근의공식|이차방정식/,
+      answer: "이차방정식의 근의 공식\n\nax² + bx + c = 0 (a ≠ 0)일 때\n\n x = (-b ± √(b² - 4ac)) / 2a\n\n여기서 b² - 4ac는 판별식입니다. 판별식이 양수면 서로 다른 두 실근, 0이면 중근, 음수면 실근이 없습니다.",
+    },
+    {
+      match: /확률/,
+      answer: "확률의 기본 공식\n\n각 결과가 일어날 가능성이 모두 같을 때\n\n 확률 = 원하는 경우의 수 ÷ 전체 경우의 수\n\n예를 들어 주사위에서 짝수가 나오는 경우는 2, 4, 6의 3가지이고 전체는 6가지이므로 확률은 3/6 = 1/2입니다.",
+    },
+    {
+      match: /원의?넓이|원의?둘레|원주/,
+      answer: "원의 공식\n\n반지름을 r이라고 하면\n\n 원의 넓이 = πr²\n 원의 둘레 = 2πr\n\n지름이 주어졌다면 먼저 2로 나누어 반지름을 구하세요. π는 보통 문제의 조건에 따라 3.14 또는 π 그대로 사용합니다.",
+    },
+    {
+      match: /기울기|일차함수/,
+      answer: "직선의 기울기 공식\n\n두 점 (x₁, y₁), (x₂, y₂)를 지나는 직선의 기울기 m은\n\n m = (y₂ - y₁) / (x₂ - x₁)\n\n일차함수 y = mx + b에서 m은 기울기, b는 y절편입니다. x₂와 x₁이 같으면 분모가 0이므로 기울기를 정할 수 없습니다.",
+    },
+    {
+      match: /삼각형.*넓이|넓이.*삼각형/,
+      answer: "삼각형의 넓이 공식\n\n 넓이 = 밑변 × 높이 ÷ 2\n\n높이는 밑변과 반드시 수직인 길이입니다. 삼각형 밖으로 높이를 연장해야 하는 경우도 있으니 수직 표시를 먼저 확인하세요.",
+    },
+    {
+      match: /속력|속도|거리|시간/,
+      answer: "거리·속력·시간 공식\n\n 거리 = 속력 × 시간\n 속력 = 거리 ÷ 시간\n 시간 = 거리 ÷ 속력\n\n계산 전에 km와 m, 시간과 분처럼 단위를 반드시 통일해야 합니다.",
+    },
+  ];
+  return formulas.find((formula) => formula.match.test(text))?.answer || "";
+}
+
+async function getFallbackAnswer(question, selectedSubject) {
+  const inferredSubject = inferQuestionSubject(question, selectedSubject);
+  if (inferredSubject === "수학") {
+    const formulaAnswer = getMathFormulaAnswer(question);
+    if (formulaAnswer) return { answer: formulaAnswer, sources: [], subject: inferredSubject };
+  }
+
+  const searchQuery =
+    question
+      .replace(
+        /(무엇인가요|무엇인가|뭔가요|뭐야|알려\s*줘|알려주세요|설명해\s*줘|설명해주세요|어떤\s*원리로|어떻게\s*일어나나요|의\s*주요\s*업적|주요\s*업적|핵심\s*개념|에\s*대해|\?)/g,
+        " "
+      )
+      .replace(/\s+/g, " ")
+      .trim() || question;
+
+  const endpoint = new URL("https://ko.wikipedia.org/w/api.php");
+  endpoint.search = new URLSearchParams({
+    action: "query",
+    generator: "search",
+    gsrsearch: searchQuery,
+    gsrlimit: "3",
+    prop: "extracts|info",
+    exintro: "1",
+    explaintext: "1",
+    inprop: "url",
+    format: "json",
+    origin: "*",
+  });
+
+  const response = await fetch(endpoint);
+  if (!response.ok) throw new Error("인터넷 자료를 가져오지 못했어요.");
+  const data = await response.json();
+  const pages = Object.values(data.query?.pages || {}).sort((a, b) => (a.index || 0) - (b.index || 0));
+  if (!pages.length) throw new Error("질문과 관련된 자료를 찾지 못했어요. 핵심 낱말을 넣어 다시 질문해주세요.");
+
+  const answer = pages
+    .slice(0, 2)
+    .map((page) => `${page.title}\n${(page.extract || "관련 문서를 확인해보세요.").slice(0, 650)}`)
+    .join("\n\n");
+
+  return {
+    answer: `질문과 가장 관련 있는 인터넷 자료를 정리했어요.\n\n${answer}`,
+    sources: pages.map((page) => ({ title: page.title, url: page.fullurl })).filter((source) => source.url),
+    subject: inferredSubject,
+  };
+}
+
 function formatTimer(seconds) {
   const minute = String(Math.floor(seconds / 60)).padStart(2, "0");
   const second = String(seconds % 60).padStart(2, "0");
@@ -354,18 +457,29 @@ export default function Home() {
     setAnswer(null);
 
     try {
-      const response = await fetch("/api/coach", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          question: trimmedQuestion,
-          subject: activePlan?.subject || subject,
-          range: activePlan?.range || range,
-          grade: activePlan?.grade || user?.grade || grade,
-        }),
-      });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "답변을 가져오지 못했어요.");
+      const selectedSubject = activePlan?.subject || subject;
+      let result;
+
+      try {
+        const response = await fetch("/api/coach", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            question: trimmedQuestion,
+            subject: selectedSubject,
+            range: activePlan?.range || range,
+            grade: activePlan?.grade || user?.grade || grade,
+          }),
+        });
+        const contentType = response.headers.get("content-type") || "";
+        if (!contentType.includes("application/json")) throw new Error("API_UNAVAILABLE");
+        const apiResult = await response.json();
+        if (!response.ok) throw new Error(apiResult.error || "API_UNAVAILABLE");
+        result = { ...apiResult, subject: apiResult.subject || inferQuestionSubject(trimmedQuestion, selectedSubject) };
+      } catch {
+        result = await getFallbackAnswer(trimmedQuestion, selectedSubject);
+      }
+
       setAnswer(result);
       setAnswerStatus("success");
     } catch (requestError) {
@@ -732,7 +846,7 @@ export default function Home() {
                   <input
                     value={question}
                     onChange={(event) => setQuestion(event.target.value)}
-                    placeholder="예: 세종대왕의 주요 업적은 무엇인가요?"
+                    placeholder={getQuestionPlaceholder(activePlan?.subject || subject)}
                     maxLength={1000}
                   />
                 </label>
@@ -742,7 +856,7 @@ export default function Home() {
               </form>
               {answer && (
                 <div className={`coach-answer ${answerStatus === "error" ? "error" : ""}`}>
-                  <b>{answerStatus === "error" ? "답변을 불러오지 못했어요" : `${activePlan?.subject || subject} 코치의 답변`}</b>
+                  <b>{answerStatus === "error" ? "자료를 찾지 못했어요" : `${answer.subject || activePlan?.subject || subject} 코치의 답변`}</b>
                   <p>{answer.answer}</p>
                   {answer.sources?.length > 0 && (
                     <div className="answer-sources">
