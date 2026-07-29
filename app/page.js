@@ -127,6 +127,9 @@ function formatTimer(seconds) {
 
 export default function Home() {
   const defaultExam = useMemo(() => localDateString(addDays(new Date(), 14)), []);
+  const [user, setUser] = useState(null);
+  const [loginName, setLoginName] = useState("");
+  const [grade, setGrade] = useState("중2");
   const [subject, setSubject] = useState("한국사");
   const [examDate, setExamDate] = useState(defaultExam);
   const [range, setRange] = useState("조선 전기부터 근대 사회까지");
@@ -141,9 +144,21 @@ export default function Home() {
   const [timerRunning, setTimerRunning] = useState(false);
   const [timerMode, setTimerMode] = useState(25);
   const [questionIndex, setQuestionIndex] = useState(0);
+  const [question, setQuestion] = useState("");
+  const [answer, setAnswer] = useState("");
+  const [sharedPlans, setSharedPlans] = useState([]);
+  const [communityGrade, setCommunityGrade] = useState("전체");
 
   useEffect(() => {
-    const saved = localStorage.getItem("study-flow-plans");
+    const savedUser = localStorage.getItem("study-flow-user");
+    if (savedUser) setUser(JSON.parse(savedUser));
+    const shared = localStorage.getItem("study-flow-shared");
+    if (shared) setSharedPlans(JSON.parse(shared));
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    const saved = localStorage.getItem(`study-flow-plans-${user.id}`);
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
@@ -173,12 +188,14 @@ export default function Home() {
         } catch {}
       }
     }
-  }, []);
+  }, [user]);
 
   useEffect(() => {
-    if (plans.length) localStorage.setItem("study-flow-plans", JSON.stringify(plans));
-    else localStorage.removeItem("study-flow-plans");
-  }, [plans]);
+    if (!user) return;
+    const key = `study-flow-plans-${user.id}`;
+    if (plans.length) localStorage.setItem(key, JSON.stringify(plans));
+    else localStorage.removeItem(key);
+  }, [plans, user]);
 
   useEffect(() => {
     if (!currentPlanId || !plan.length) return;
@@ -224,6 +241,7 @@ export default function Home() {
     const savedPlan = {
       id,
       name: `계획 ${plans.length + 1}`,
+      grade,
       subject: subject.trim() || "시험 공부",
       range: range.trim(),
       examDate,
@@ -265,6 +283,46 @@ export default function Home() {
     setTimerRunning(false);
   };
 
+  const login = (event) => {
+    event.preventDefault();
+    if (!loginName.trim()) return;
+    const nextUser = { id: loginName.trim().toLowerCase().replace(/\s+/g, "-"), name: loginName.trim(), grade };
+    localStorage.setItem("study-flow-user", JSON.stringify(nextUser));
+    setUser(nextUser);
+    setPlans([]);
+  };
+
+  const logout = () => {
+    localStorage.removeItem("study-flow-user");
+    setUser(null);
+    setPlans([]);
+    setPlan([]);
+    setView("form");
+  };
+
+  const askCoach = (event) => {
+    event.preventDefault();
+    if (!question.trim()) return;
+    const q = question.trim();
+    const base = getStudyHelp(activePlan?.subject || subject, `${activePlan?.range || range} ${q}`);
+    const detail = q.includes("왜") ? "원리를 작은 예시 하나에 적용한 뒤 숫자만 바꿔 다시 풀어보세요." : q.includes("공식") ? "공식을 외우기 전에 각 기호가 무엇을 뜻하는지 말로 풀어 써보세요." : "막힌 지점을 한 문장으로 적고, 가장 마지막으로 확실히 아는 단계부터 다시 시작해보세요.";
+    setAnswer(`${base.tip} ${detail}`);
+  };
+
+  const shareCurrentPlan = () => {
+    if (!activePlan || sharedPlans.some((item) => item.sourceId === activePlan.id && item.author === user.name)) return;
+    const shared = { ...activePlan, id: `shared-${Date.now()}`, sourceId: activePlan.id, author: user.name, grade: activePlan.grade || user.grade, likes: 0 };
+    const next = [shared, ...sharedPlans];
+    setSharedPlans(next);
+    localStorage.setItem("study-flow-shared", JSON.stringify(next));
+  };
+
+  const copySharedPlan = (shared) => {
+    const copied = { ...shared, id: `plan-${Date.now()}`, name: `계획 ${plans.length + 1}`, createdAt: new Date().toISOString(), items: shared.items.map((item, index) => ({ ...item, id: `${Date.now()}-${index}`, done: false })) };
+    setPlans((current) => [copied, ...current]);
+    openPlan(copied);
+  };
+
   const toggleDay = (day) => {
     setDays((current) =>
       current.includes(day)
@@ -277,6 +335,32 @@ export default function Home() {
   const progress = plan.length ? Math.round((doneCount / plan.length) * 100) : 0;
   const activePlan = plans.find((savedPlan) => savedPlan.id === currentPlanId);
   const studyHelp = getStudyHelp(activePlan?.subject || subject, activePlan?.range || range);
+  const communityPlans = [
+    { id: "sample-1", name: "7일 완성 계획", grade: "중2", subject: "수학", range: "경우의 수와 확률", author: "공부별", likes: 18, items: makePlan({ subject: "수학", examDate: defaultExam, range: "경우의 수, 확률의 뜻, 확률 계산", days: DEFAULT_DAYS, minutes: 40 }) },
+    { id: "sample-2", name: "개념부터 차근차근", grade: "중3", subject: "과학", range: "생식과 유전", author: "차근이", likes: 12, items: makePlan({ subject: "과학", examDate: defaultExam, range: "세포 분열, 생식, 유전", days: DEFAULT_DAYS, minutes: 50 }) },
+    { id: "sample-3", name: "시험 전 핵심 복습", grade: "고1", subject: "영어", range: "교과서 3–4과", author: "영단어왕", likes: 25, items: makePlan({ subject: "영어", examDate: defaultExam, range: "3과 본문, 3과 문법, 4과 본문, 4과 문법", days: DEFAULT_DAYS, minutes: 60 }) },
+    ...sharedPlans,
+  ].filter((item) => communityGrade === "전체" || item.grade === communityGrade);
+
+  if (!user) {
+    return (
+      <main className="auth-page">
+        <section className="auth-copy">
+          <button className="brand">공부<span>하자!</span></button>
+          <p className="eyebrow">MY OWN STUDY SPACE</p>
+          <h1>내 계획은<br /><em>나에게만.</em></h1>
+          <p>프로필마다 계획을 따로 보관하고,<br />같은 학년 친구들의 공부법도 찾아보세요.</p>
+        </section>
+        <form className="auth-card" onSubmit={login}>
+          <div className="card-heading"><span>내 공부방 시작하기</span><span className="step">LOCAL</span></div>
+          <label><span>이름 또는 별명</span><input value={loginName} onChange={(event) => setLoginName(event.target.value)} placeholder="예: 확률마스터" autoFocus /></label>
+          <label><span>현재 학년</span><select value={grade} onChange={(event) => setGrade(event.target.value)}>{["초4","초5","초6","중1","중2","중3","고1","고2","고3"].map((item) => <option key={item}>{item}</option>)}</select></label>
+          <button className="primary-button" type="submit">내 공부방 들어가기 <span>→</span></button>
+          <p className="privacy">체험용 로컬 프로필 · 비밀번호이나 개인정보를 받지 않아요.</p>
+        </form>
+      </main>
+    );
+  }
 
   return (
     <main>
@@ -285,7 +369,8 @@ export default function Home() {
           공부<span>하자!</span>
         </button>
         <div className="nav-right">
-          <span>오늘부터, 차근차근.</span>
+          <button className="user-badge" onClick={logout}>{user.grade} · {user.name} <small>로그아웃</small></button>
+          <button className="nav-link" onClick={() => setView("community")}>계획 둘러보기</button>
           <button className="nav-link" onClick={() => setView("library")}>
             계획 보관함 <b>{plans.length}</b>
           </button>
@@ -317,6 +402,12 @@ export default function Home() {
             <label>
               <span>과목명</span>
               <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="예: 한국사" />
+            </label>
+            <label>
+              <span>대상 학년</span>
+              <select value={grade} onChange={(e) => setGrade(e.target.value)}>
+                {["초4","초5","초6","중1","중2","중3","고1","고2","고3"].map((item) => <option key={item}>{item}</option>)}
+              </select>
             </label>
 
             <label>
@@ -352,6 +443,31 @@ export default function Home() {
             </button>
             <p className="privacy">입력한 정보는 이 기기에만 저장돼요.</p>
           </form>
+        </section>
+      ) : view === "community" ? (
+        <section className="library-shell">
+          <header className="library-header">
+            <div><p className="eyebrow">STUDY COMMUNITY</p><h1>계획 둘러보기</h1><p>같은 학년·단원을 공부한 친구의 계획을 내 보관함에 담아보세요.</p></div>
+            <div className="community-filter">
+              <span>학년 필터</span>
+              <select value={communityGrade} onChange={(event) => setCommunityGrade(event.target.value)}>
+                {["전체","초4","초5","초6","중1","중2","중3","고1","고2","고3"].map((item) => <option key={item}>{item}</option>)}
+              </select>
+            </div>
+          </header>
+          <div className="community-notice">현재는 이 브라우저 안에서 작동하는 체험 커뮤니티예요. 실제 다중 사용자 공유는 서버 연결 후 사용할 수 있어요.</div>
+          <div className="library-grid">
+            {communityPlans.map((shared) => (
+              <article className="library-card community-card" key={shared.id}>
+                <div className="library-number">♡ {shared.likes || 0}</div>
+                <span className="subject-chip">{shared.grade} · {shared.subject}</span>
+                <h2>{shared.range}</h2>
+                <p>by {shared.author} · {shared.name} · 총 {shared.items.length}회</p>
+                <div className="community-preview">“하루씩 따라가며 완료 체크할 수 있어요.”</div>
+                <div className="library-actions"><button onClick={() => copySharedPlan(shared)}>이 계획 따라하기 <span>→</span></button></div>
+              </article>
+            ))}
+          </div>
         </section>
       ) : view === "library" ? (
         <section className="library-shell">
@@ -402,7 +518,10 @@ export default function Home() {
               <h1><em>{plan[0]?.subject}</em>, 오늘부터 시작!</h1>
               <p>{plan.length}번의 공부로 시험 준비를 끝내요.</p>
             </div>
-            <button className="primary-button compact" onClick={() => setView("library")}>보관함 보기</button>
+            <div className="result-actions">
+              <button className="ghost-button" onClick={shareCurrentPlan}>커뮤니티에 공유</button>
+              <button className="primary-button compact" onClick={() => setView("library")}>보관함 보기</button>
+            </div>
           </header>
 
           <div className="progress-card">
@@ -447,6 +566,11 @@ export default function Home() {
                 <strong>{studyHelp.questions[questionIndex % studyHelp.questions.length]}</strong>
               </div>
               <button className="question-button" onClick={() => setQuestionIndex((index) => index + 1)}>다른 질문 받기 ↻</button>
+              <form className="ask-form" onSubmit={askCoach}>
+                <label><span>모르는 부분 직접 질문하기</span><input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="예: 확률에서 왜 전체 경우로 나눠요?" /></label>
+                <button type="submit">조언 받기</button>
+              </form>
+              {answer && <div className="coach-answer"><b>코치의 조언</b><p>{answer}</p></div>}
             </article>
           </div>
 
