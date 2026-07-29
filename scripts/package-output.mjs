@@ -139,3 +139,8 @@ export default {
 `,
   "utf8"
 );
+
+// Sites validates the worker entrypoint at dist/server/index.js inside the
+// uploaded archive, while static assets must remain at the archive root.
+await mkdir("dist/dist/server", { recursive: true });
+await copyFile("dist/server/index.js", "dist/dist/server/index.js");
