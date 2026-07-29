@@ -1,0 +1,70 @@
+.public-home, .info-page { min-height: 100vh; background: var(--paper); }
+.public-nav {
+  height: 76px; max-width: 1180px; margin: 0 auto; padding: 0 32px;
+  display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line);
+}
+.public-nav .brand, .public-footer .brand { text-decoration: none; }
+.public-nav > div { display: flex; gap: 28px; }
+.public-nav > div a { color: var(--ink); text-decoration: none; font-size: 13px; font-weight: 700; }
+.public-home .auth-page { min-height: 660px; padding-top: 80px; padding-bottom: 90px; }
+.auth-copy > p:last-of-type { max-width: 650px; }
+.hero-points { margin: 28px 0 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+.hero-points li { font-size: 13px; color: #4d577b; }
+.hero-points li::before { content: "✓"; margin-right: 9px; color: var(--blue); font-weight: 900; }
+.public-section { max-width: 1120px; margin: 0 auto; padding: 100px 32px; }
+.section-heading { max-width: 720px; margin-bottom: 45px; }
+.section-heading h1, .section-heading h2, .article-body h1 {
+  margin: 0; font-family: "Black Han Sans", sans-serif; font-size: clamp(38px, 5vw, 58px);
+  font-weight: 400; line-height: 1.15; letter-spacing: -.035em;
+}
+.section-heading > p:last-child { margin: 20px 0 0; color: #57617f; font-size: 15px; line-height: 1.8; }
+.method-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+.method-grid article, .principle-list article {
+  padding: 30px; border: 1px solid var(--ink); background: white; box-shadow: 5px 5px 0 var(--light-blue);
+}
+.method-grid b { color: var(--orange); font-size: 12px; }
+.method-grid h3, .principle-list h3 { margin: 18px 0 12px; font-size: 20px; }
+.method-grid p, .principle-list p { margin: 0; color: #59627e; font-size: 13px; line-height: 1.8; }
+.evidence-section { max-width: none; padding-left: max(32px, calc((100vw - 1056px) / 2)); padding-right: max(32px, calc((100vw - 1056px) / 2)); background: #eef1fb; }
+.principle-list { display: grid; gap: 12px; }
+.principle-list article { box-shadow: none; display: grid; grid-template-columns: 280px 1fr; gap: 35px; align-items: start; }
+.principle-list h3 { margin: 0; }
+.text-link { display: inline-block; margin-top: 28px; color: var(--blue); font-size: 13px; font-weight: 800; text-decoration: none; }
+.faq-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.faq-grid details { padding: 21px 24px; border: 1px solid var(--line); background: white; }
+.faq-grid summary { cursor: pointer; font-weight: 800; font-size: 14px; }
+.faq-grid p { color: #59627e; font-size: 12px; line-height: 1.75; }
+.public-footer { min-height: 220px; padding: 45px max(32px, calc((100vw - 1120px) / 2)); display: grid; grid-template-columns: 1fr auto; gap: 28px; color: var(--paper); background: var(--ink); }
+.public-footer > div p, .public-footer > p { margin: 12px 0 0; font-size: 11px; opacity: .7; }
+.public-footer nav { display: flex; flex-wrap: wrap; gap: 18px; align-items: start; }
+.public-footer nav a, .public-footer nav button { color: white; border: 0; padding: 0; background: transparent; font-size: 11px; font-weight: 700; text-decoration: none; }
+.public-footer > p { grid-column: 1 / -1; align-self: end; }
+.info-main { max-width: 1060px; margin: 0 auto; padding: 80px 32px 110px; }
+.info-main .section-heading { max-width: 800px; }
+.article-body { max-width: 760px; }
+.article-body .eyebrow { margin-bottom: 18px; }
+.article-body h1 { margin-bottom: 28px; }
+.article-body h2 { margin: 48px 0 14px; font-size: 27px; }
+.article-body h3 { margin: 32px 0 10px; font-size: 19px; }
+.article-body p, .article-body li { color: #47516f; font-size: 15px; line-height: 1.9; }
+.article-body ul, .article-body ol { padding-left: 22px; }
+.article-note { margin: 28px 0; padding: 20px 22px; border-left: 4px solid var(--blue); background: var(--light-blue); }
+.article-note p { margin: 0; }
+.guide-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+.guide-card { padding: 28px; border: 1px solid var(--ink); background: white; color: var(--ink); text-decoration: none; }
+.guide-card span { color: var(--blue); font-size: 10px; font-weight: 800; letter-spacing: .12em; }
+.guide-card h2 { margin: 18px 0 12px; font-size: 21px; line-height: 1.45; }
+.guide-card p { margin: 0; color: #626b85; font-size: 12px; line-height: 1.75; }
+.guide-card:hover { box-shadow: 5px 5px 0 var(--light-blue); transform: translate(-2px, -2px); }
+
+@media (max-width: 800px) {
+  .public-nav { padding: 0 20px; }
+  .public-nav > div { gap: 14px; }
+  .public-nav > div a:first-child { display: none; }
+  .public-home .auth-page { padding-top: 55px; }
+  .public-section, .info-main { padding: 70px 20px; }
+  .method-grid, .guide-grid, .faq-grid { grid-template-columns: 1fr; }
+  .principle-list article { grid-template-columns: 1fr; gap: 8px; }
+  .public-footer { grid-template-columns: 1fr; padding: 40px 20px; }
+  .public-footer > p { grid-column: auto; }
+}

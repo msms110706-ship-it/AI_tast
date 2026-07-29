@@ -612,21 +612,80 @@ export default function Home() {
 
   if (!user && view !== "contact") {
     return (
-      <main className="auth-page">
-        <section className="auth-copy">
-          <button className="brand">공부<span>하자!</span></button>
-          <p className="eyebrow">MY OWN STUDY SPACE</p>
-          <h1>내 계획은<br /><em>나에게만.</em></h1>
-          <p>프로필마다 계획을 따로 보관하고,<br />같은 학년 친구들의 공부법도 찾아보세요.</p>
+      <main className="public-home">
+        <nav className="public-nav" aria-label="주요 메뉴">
+          <a className="brand" href="/">공부<span>하자!</span></a>
+          <div>
+            <a href="#planner-start">플래너 시작</a>
+            <a href="/guides">학습 가이드</a>
+            <a href="/about">서비스 소개</a>
+          </div>
+        </nav>
+
+        <section className="auth-page" id="planner-start">
+          <div className="auth-copy">
+            <p className="eyebrow">FREE STUDY PLANNER</p>
+            <h1>시험 공부를<br /><em>실행 가능한 계획으로.</em></h1>
+            <p>시험일, 범위, 가능한 요일을 입력하면 남은 기간에 맞춰 학습과 복습 일정을 나눠드립니다. 가입 없이 이 기기에서 무료로 사용할 수 있어요.</p>
+            <ul className="hero-points">
+              <li>시험 전 마지막 날은 전체 복습으로 자동 배정</li>
+              <li>학습 가능 요일과 하루 공부 시간을 직접 설정</li>
+              <li>계획과 완료 기록은 브라우저에만 저장</li>
+            </ul>
+          </div>
+          <form className="auth-card" onSubmit={login}>
+            <div className="card-heading"><span>무료 플래너 시작하기</span><span className="step">LOCAL</span></div>
+            <label><span>이름 또는 별명</span><input value={loginName} onChange={(event) => setLoginName(event.target.value)} placeholder="예: 확률마스터" autoFocus /></label>
+            <label><span>현재 학년</span><select value={grade} onChange={(event) => setGrade(event.target.value)}>{["초4","초5","초6","중1","중2","중3","고1","고2","고3"].map((item) => <option key={item}>{item}</option>)}</select></label>
+            <button className="primary-button" type="submit">내 공부방 들어가기 <span>→</span></button>
+            <p className="privacy">비밀번호나 실명을 요구하지 않습니다.</p>
+          </form>
         </section>
-        <form className="auth-card" onSubmit={login}>
-          <div className="card-heading"><span>내 공부방 시작하기</span><span className="step">LOCAL</span></div>
-          <label><span>이름 또는 별명</span><input value={loginName} onChange={(event) => setLoginName(event.target.value)} placeholder="예: 확률마스터" autoFocus /></label>
-          <label><span>현재 학년</span><select value={grade} onChange={(event) => setGrade(event.target.value)}>{["초4","초5","초6","중1","중2","중3","고1","고2","고3"].map((item) => <option key={item}>{item}</option>)}</select></label>
-          <button className="primary-button" type="submit">내 공부방 들어가기 <span>→</span></button>
-          <p className="privacy">체험용 로컬 프로필 · 비밀번호이나 개인정보를 받지 않아요.</p>
-          <button className="contact-entry" type="button" onClick={() => setView("contact")}>제휴 문의하기 →</button>
-        </form>
+
+        <section className="public-section" aria-labelledby="method-title">
+          <div className="section-heading">
+            <p className="eyebrow">HOW IT WORKS</p>
+            <h2 id="method-title">계획이 실제 공부로 이어지도록</h2>
+            <p>많은 계획이 실패하는 이유는 의지가 부족해서가 아니라, 해야 할 일이 너무 크고 모호하기 때문입니다. 공부하자는 범위와 시간을 작은 행동 단위로 바꾸는 데 집중합니다.</p>
+          </div>
+          <div className="method-grid">
+            <article><b>01</b><h3>범위를 나눕니다</h3><p>단원이나 교재 범위를 쉼표로 구분하면 공부 가능한 날짜에 순서대로 배분합니다. 무엇을 펼쳐야 할지 고민하는 시간을 줄일 수 있습니다.</p></article>
+            <article><b>02</b><h3>복습을 끼워 넣습니다</h3><p>공부일이 충분하면 네 번째 학습마다 복습일을 만들고, 시험 전 마지막 공부일에는 전체 범위와 오답을 점검합니다.</p></article>
+            <article><b>03</b><h3>완료를 기록합니다</h3><p>공부한 일정에 체크하며 진행률을 확인합니다. 계획을 놓친 날에는 실패로 판단하기보다 남은 일정의 분량을 현실적으로 다시 조정하세요.</p></article>
+          </div>
+        </section>
+
+        <section className="public-section evidence-section" aria-labelledby="principles-title">
+          <div className="section-heading">
+            <p className="eyebrow">STUDY PRINCIPLES</p>
+            <h2 id="principles-title">계획표와 함께 써야 효과적인 3가지 원칙</h2>
+          </div>
+          <div className="principle-list">
+            <article><h3>읽은 뒤 책을 덮고 떠올리기</h3><p>같은 내용을 반복해서 읽는 것보다, 방금 배운 내용을 보지 않고 설명하거나 적어보세요. 기억나지 않는 부분을 발견하는 과정 자체가 다음 복습 범위를 정해줍니다.</p></article>
+            <article><h3>복습 간격을 조금씩 늘리기</h3><p>한 번에 오래 외우기보다 학습 당일, 며칠 뒤, 시험 전에 다시 확인하세요. 매번 모든 내용을 읽지 말고 틀린 문제와 헷갈린 개념을 우선하면 시간을 아낄 수 있습니다.</p></article>
+            <article><h3>시간보다 결과를 구체적으로 적기</h3><p>‘수학 1시간’ 대신 ‘연립방정식 개념 확인 후 유형 문제 10개’처럼 끝났는지 판단할 수 있는 목표를 사용하세요. 집중 시간은 목표를 돕는 도구이지 목표 자체가 아닙니다.</p></article>
+          </div>
+          <a className="text-link" href="/guides">과목별 학습 가이드 모두 보기 →</a>
+        </section>
+
+        <section className="public-section faq-section" aria-labelledby="faq-title">
+          <div className="section-heading"><p className="eyebrow">FAQ</p><h2 id="faq-title">자주 묻는 질문</h2></div>
+          <div className="faq-grid">
+            <details><summary>계획은 서버에 저장되나요?</summary><p>아니요. 현재 버전은 별명, 계획, 완료 기록을 사용 중인 브라우저의 로컬 저장소에만 보관합니다. 브라우저 데이터를 삭제하거나 다른 기기를 사용하면 기록이 이어지지 않습니다.</p></details>
+            <details><summary>만든 계획을 그대로 따라야 하나요?</summary><p>아닙니다. 학교 일정이나 이해도에 따라 분량을 바꾸는 것이 좋습니다. 하루를 놓쳤다면 다음 날에 전부 몰아넣기보다 중요도가 낮은 내용을 줄이고 복습일을 지키세요.</p></details>
+            <details><summary>학습 코치 답변은 항상 정확한가요?</summary><p>학습 코치는 이해를 돕는 보조 기능입니다. 중요한 시험 정보와 교과 내용은 학교 교재와 담당 교사의 안내를 우선하고, 인터넷 출처가 표시된 경우 원문도 함께 확인하세요.</p></details>
+            <details><summary>누가 이용할 수 있나요?</summary><p>초등학교 고학년부터 고등학생까지 사용할 수 있도록 만들었습니다. 학년은 계획을 구분하기 위한 항목이며, 누구나 무료로 플래너와 공개 학습 자료를 이용할 수 있습니다.</p></details>
+          </div>
+        </section>
+
+        <footer className="public-footer">
+          <div><a className="brand" href="/">공부<span>하자!</span></a><p>학생이 오늘 할 일을 분명하게 만드는 무료 시험 공부 도구</p></div>
+          <nav aria-label="사이트 정보">
+            <a href="/about">소개</a><a href="/guides">학습 가이드</a><a href="/privacy">개인정보처리방침</a><a href="/terms">이용약관</a>
+            <button type="button" onClick={() => setView("contact")}>문의</button>
+          </nav>
+          <p>© 2026 공부하자. All rights reserved.</p>
+        </footer>
       </main>
     );
   }
