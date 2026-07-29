@@ -1,4 +1,4 @@
-import { mkdir, copyFile, writeFile } from "node:fs/promises";
+import { cp, mkdir, copyFile, rm, writeFile } from "node:fs/promises";
 
 await mkdir("dist/server", { recursive: true });
 await mkdir("dist/.openai", { recursive: true });
@@ -144,3 +144,11 @@ export default {
 // uploaded archive, while static assets must remain at the archive root.
 await mkdir("dist/dist/server", { recursive: true });
 await copyFile("dist/server/index.js", "dist/dist/server/index.js");
+
+// Sites/vinext archives serve browser assets from .output/public and execute
+// the worker at .output/server/index.js.
+await rm(".output", { recursive: true, force: true });
+await mkdir(".output/server", { recursive: true });
+await mkdir(".output/public", { recursive: true });
+await copyFile("dist/server/index.js", ".output/server/index.js");
+await cp("dist", ".output/public", { recursive: true });
