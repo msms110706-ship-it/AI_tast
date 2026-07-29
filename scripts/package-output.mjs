@@ -157,3 +157,8 @@ await cp("dist", ".output/public", { recursive: true });
 // Mirror the verified static export there while preserving `dist` for Sites.
 await rm("out", { recursive: true, force: true });
 await cp("dist", "out", { recursive: true });
+
+// Cloudflare's regular Next.js Pages preset publishes this directory.
+await rm(".vercel/output/static", { recursive: true, force: true });
+await mkdir(".vercel/output/static", { recursive: true });
+await cp("dist", ".vercel/output/static", { recursive: true });
