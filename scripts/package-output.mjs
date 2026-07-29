@@ -152,3 +152,8 @@ await mkdir(".output/server", { recursive: true });
 await mkdir(".output/public", { recursive: true });
 await copyFile("dist/server/index.js", ".output/server/index.js");
 await cp("dist", ".output/public", { recursive: true });
+
+// Cloudflare Pages' Next.js static-export preset publishes from `out`.
+// Mirror the verified static export there while preserving `dist` for Sites.
+await rm("out", { recursive: true, force: true });
+await cp("dist", "out", { recursive: true });
