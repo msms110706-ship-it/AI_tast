@@ -4,12 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 
 const DAY_NAMES = ["일", "월", "화", "수", "목", "금", "토"];
 const DEFAULT_DAYS = [1, 2, 3, 4, 5, 6];
-const DISQUS_URL = "https://study-flow-planner.msms110706.chatgpt.site/";
-
 function DisqusComments() {
   useEffect(() => {
     window.disqus_config = function () {
-      this.page.url = DISQUS_URL;
+      this.page.url = `${window.location.origin}${window.location.pathname}`;
       this.page.identifier = "gongbuhaja-community";
       this.page.title = "공부하자! 이야기 나눔";
     };
