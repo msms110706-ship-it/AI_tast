@@ -107,11 +107,30 @@ async function answerQuestion(request, env) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (url.pathname === "/ads.txt") {
+      return new Response(
+        "google.com, pub-3450079984401603, DIRECT, f08c47fec0942fa0\\n",
+        {
+          headers: {
+            "content-type": "text/plain; charset=utf-8",
+            "cache-control": "public, max-age=3600",
+          },
+        }
+      );
+    }
     if (url.pathname === "/api/coach") {
       if (request.method !== "POST") return json({ error: "POST 요청만 지원해요." }, 405);
       return answerQuestion(request, env);
     }
-    if (env?.ASSETS?.fetch) return env.ASSETS.fetch(request);
+    if (env?.ASSETS?.fetch) {
+      const assetUrl = new URL(url);
+      if (assetUrl.pathname === "/") {
+        assetUrl.pathname = "/index.html";
+      } else if (!assetUrl.pathname.includes(".")) {
+        assetUrl.pathname = \`\${assetUrl.pathname.replace(/\\/$/, "")}.html\`;
+      }
+      return env.ASSETS.fetch(new Request(assetUrl, request));
+    }
     return new Response("Study planner is ready.", {
       headers: { "content-type": "text/plain; charset=utf-8" }
     });
