@@ -355,6 +355,22 @@ footer p { font-size: 11px; opacity: .7; }
 .form-status { margin: -3px 0 15px; padding: 11px 13px; font-size: 11px; font-weight: 700; }
 .form-status.success { color: #1d6847; background: #e4f6ed; }
 .form-status.error { color: #b13924; background: #fff0eb; }
+.comments-shell {
+  max-width: 1040px; margin: 0 auto; padding: 72px 32px 84px;
+  border-top: 2px solid var(--ink);
+}
+.comments-heading {
+  display: flex; justify-content: space-between; align-items: flex-end; gap: 30px;
+  margin-bottom: 38px;
+}
+.comments-heading .eyebrow { margin-bottom: 9px; }
+.comments-heading h2 {
+  margin: 0; font-family: "Black Han Sans", sans-serif; font-size: 40px;
+  font-weight: 400; letter-spacing: -.025em;
+}
+.comments-heading > p { margin: 0 0 5px; color: #707892; font-size: 12px; }
+.comments-shell noscript { display: block; padding: 18px; background: white; font-size: 12px; }
+.comments-shell noscript a { color: var(--blue); }
 footer button {
   margin-left: auto; margin-right: 26px; border: 0; padding: 6px; color: var(--paper);
   background: transparent; font-size: 11px; font-weight: 800; text-decoration: underline; text-underline-offset: 4px;
@@ -397,5 +413,9 @@ footer button {
   .back-link { margin-bottom: 35px; }
   .contact-note { margin-top: 28px; }
   .contact-row { grid-template-columns: 1fr; gap: 0; }
+  .comments-shell { padding: 52px 20px 64px; }
+  .comments-heading { display: block; margin-bottom: 30px; }
+  .comments-heading h2 { font-size: 34px; }
+  .comments-heading > p { margin-top: 11px; }
   footer button { margin-right: 12px; }
 }

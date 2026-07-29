@@ -4,6 +4,48 @@ import { useEffect, useMemo, useState } from "react";
 
 const DAY_NAMES = ["일", "월", "화", "수", "목", "금", "토"];
 const DEFAULT_DAYS = [1, 2, 3, 4, 5, 6];
+const DISQUS_URL = "https://study-flow-planner.msms110706.chatgpt.site/";
+
+function DisqusComments() {
+  useEffect(() => {
+    window.disqus_config = function () {
+      this.page.url = DISQUS_URL;
+      this.page.identifier = "gongbuhaja-community";
+      this.page.title = "공부하자! 이야기 나눔";
+    };
+
+    if (window.DISQUS) {
+      window.DISQUS.reset({
+        reload: true,
+        config: window.disqus_config,
+      });
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://gongbuhaja.disqus.com/embed.js";
+    script.setAttribute("data-timestamp", String(Date.now()));
+    script.async = true;
+    document.body.appendChild(script);
+  }, []);
+
+  return (
+    <section className="comments-shell" aria-labelledby="comments-title">
+      <div className="comments-heading">
+        <div>
+          <p className="eyebrow">COMMUNITY · COMMENTS</p>
+          <h2 id="comments-title">같이 이야기해요</h2>
+        </div>
+        <p>공부 팁과 응원을 자유롭게 남겨주세요.</p>
+      </div>
+      <div id="disqus_thread" />
+      <noscript>
+        댓글을 보려면 JavaScript를 활성화해주세요.{" "}
+        <a href="https://disqus.com/?ref_noscript">Disqus 댓글 보기</a>
+      </noscript>
+    </section>
+  );
+}
 
 function localDateString(date) {
   const year = date.getFullYear();
@@ -693,6 +735,8 @@ export default function Home() {
           </div>
         </section>
       )}
+
+      <DisqusComments />
 
       <footer>
         <span>공부하자!</span>
