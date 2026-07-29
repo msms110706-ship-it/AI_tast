@@ -187,7 +187,8 @@ export default function Home() {
   const [timerMode, setTimerMode] = useState(25);
   const [questionIndex, setQuestionIndex] = useState(0);
   const [question, setQuestion] = useState("");
-  const [answer, setAnswer] = useState("");
+  const [answer, setAnswer] = useState(null);
+  const [answerStatus, setAnswerStatus] = useState("idle");
   const [sharedPlans, setSharedPlans] = useState([]);
   const [communityGrade, setCommunityGrade] = useState("전체");
   const [contactStatus, setContactStatus] = useState("idle");
@@ -344,13 +345,36 @@ export default function Home() {
     setView("form");
   };
 
-  const askCoach = (event) => {
+  const askCoach = async (event) => {
     event.preventDefault();
-    if (!question.trim()) return;
-    const q = question.trim();
-    const base = getStudyHelp(activePlan?.subject || subject, `${activePlan?.range || range} ${q}`);
-    const detail = q.includes("왜") ? "원리를 작은 예시 하나에 적용한 뒤 숫자만 바꿔 다시 풀어보세요." : q.includes("공식") ? "공식을 외우기 전에 각 기호가 무엇을 뜻하는지 말로 풀어 써보세요." : "막힌 지점을 한 문장으로 적고, 가장 마지막으로 확실히 아는 단계부터 다시 시작해보세요.";
-    setAnswer(`${base.tip} ${detail}`);
+    const trimmedQuestion = question.trim();
+    if (!trimmedQuestion || answerStatus === "loading") return;
+
+    setAnswerStatus("loading");
+    setAnswer(null);
+
+    try {
+      const response = await fetch("/api/coach", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          question: trimmedQuestion,
+          subject: activePlan?.subject || subject,
+          range: activePlan?.range || range,
+          grade: activePlan?.grade || user?.grade || grade,
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "답변을 가져오지 못했어요.");
+      setAnswer(result);
+      setAnswerStatus("success");
+    } catch (requestError) {
+      setAnswer({
+        answer: requestError.message || "잠시 후 다시 질문해주세요.",
+        sources: [],
+      });
+      setAnswerStatus("error");
+    }
   };
 
   const shareCurrentPlan = () => {
@@ -703,10 +727,35 @@ export default function Home() {
               </div>
               <button className="question-button" onClick={() => setQuestionIndex((index) => index + 1)}>다른 질문 받기 ↻</button>
               <form className="ask-form" onSubmit={askCoach}>
-                <label><span>모르는 부분 직접 질문하기</span><input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="예: 확률에서 왜 전체 경우로 나눠요?" /></label>
-                <button type="submit">조언 받기</button>
+                <label>
+                  <span>{activePlan?.subject || subject}에 대해 질문하기</span>
+                  <input
+                    value={question}
+                    onChange={(event) => setQuestion(event.target.value)}
+                    placeholder="예: 세종대왕의 주요 업적은 무엇인가요?"
+                    maxLength={1000}
+                  />
+                </label>
+                <button type="submit" disabled={answerStatus === "loading"}>
+                  {answerStatus === "loading" ? "찾는 중…" : "답변 받기"}
+                </button>
               </form>
-              {answer && <div className="coach-answer"><b>코치의 조언</b><p>{answer}</p></div>}
+              {answer && (
+                <div className={`coach-answer ${answerStatus === "error" ? "error" : ""}`}>
+                  <b>{answerStatus === "error" ? "답변을 불러오지 못했어요" : `${activePlan?.subject || subject} 코치의 답변`}</b>
+                  <p>{answer.answer}</p>
+                  {answer.sources?.length > 0 && (
+                    <div className="answer-sources">
+                      <span>인터넷 출처</span>
+                      {answer.sources.map((source, index) => (
+                        <a href={source.url} target="_blank" rel="noreferrer" key={`${source.url}-${index}`}>
+                          {source.title || source.url}
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </article>
           </div>
 
