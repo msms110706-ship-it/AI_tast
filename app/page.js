@@ -1,10 +1,110 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const DAY_NAMES = ["일", "월", "화", "수", "목", "금", "토"];
 const DEFAULT_DAYS = [1, 2, 3, 4, 5, 6];
 const DISQUS_URL = "https://ai-tast.pages.dev/";
+const MUSIC_PLAYLISTS = [
+  {
+    id: "streambeats-lofi",
+    label: "INSTRUMENTAL · 무가사",
+    title: "StreamBeats - Lofi",
+    description: "말소리 없이 잔잔한 비트가 이어지는 집중용 플레이리스트예요. 독서, 암기, 문제 풀이처럼 긴 공부에 잘 어울려요.",
+    duration: "10시간 이상",
+    provider: "Spotify",
+    embedUrl: "https://open.spotify.com/embed/playlist/4kAqBBEZQsBIXMIJl6u8tO?utm_source=generator&theme=0",
+    playlistUrl: "https://open.spotify.com/playlist/4kAqBBEZQsBIXMIJl6u8tO",
+    policyUrl: "https://www.streambeats.com/",
+    policyLabel: "StreamBeats 공식 안내",
+  },
+  {
+    id: "ncs-vocal",
+    label: "VOCAL · 가사 있음",
+    title: "NCS Releases",
+    description: "보컬과 가사가 포함된 곡을 섞어 듣고 싶을 때 고르는 긴 재생목록이에요. 단순 암기보다 가벼운 정리 시간에 추천해요.",
+    duration: "10시간 이상",
+    provider: "Spotify",
+    embedUrl: "https://open.spotify.com/embed/playlist/7sZbq8QGyMnhKPcLJvCUFD?utm_source=generator&theme=0",
+    playlistUrl: "https://open.spotify.com/playlist/7sZbq8QGyMnhKPcLJvCUFD",
+    policyUrl: "https://ncs.io/usage-policy",
+    policyLabel: "NCS 이용 정책",
+  },
+];
+
+function getPlaylistEmbed(rawUrl) {
+  try {
+    const originalUrl = rawUrl.trim();
+    const url = new URL(originalUrl);
+    const host = url.hostname.replace(/^www\./, "").toLowerCase();
+    if (url.protocol !== "https:") return null;
+
+    if (host === "open.spotify.com") {
+      const match = url.pathname.match(/^\/(?:intl-[a-zA-Z-]+\/)?(playlist|album|track)\/([a-zA-Z0-9]+)\/?$/);
+      if (!match) return null;
+      return {
+        provider: "Spotify",
+        url: originalUrl,
+        linkKey: `spotify:${match[1]}:${match[2]}`,
+        embedUrl: `https://open.spotify.com/embed/${match[1]}/${match[2]}?utm_source=generator&theme=0`,
+      };
+    }
+
+    if (host === "spotify.link") {
+      const shortId = url.pathname.split("/").filter(Boolean)[0];
+      if (!shortId || !/^[a-zA-Z0-9]+$/.test(shortId)) return null;
+      return {
+        provider: "Spotify",
+        url: originalUrl,
+        linkKey: `spotify:short:${shortId}`,
+        embedUrl: null,
+      };
+    }
+
+    if (host === "youtube.com" || host === "m.youtube.com" || host === "youtu.be") {
+      const listId = url.searchParams.get("list");
+      const watchId = host === "youtu.be"
+        ? url.pathname.split("/").filter(Boolean)[0]
+        : url.searchParams.get("v") || url.pathname.match(/^\/(?:shorts|embed)\/([a-zA-Z0-9_-]+)/)?.[1];
+      if (listId && !/^[a-zA-Z0-9_-]+$/.test(listId)) return null;
+      if (watchId && !/^[a-zA-Z0-9_-]+$/.test(watchId)) return null;
+      if (!listId && !watchId) return null;
+      return {
+        provider: "YouTube",
+        url: originalUrl,
+        linkKey: listId ? `youtube:list:${listId}` : `youtube:video:${watchId}`,
+        embedUrl: null,
+        listId: listId || null,
+      };
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function getPlanShareKey(savedPlan) {
+  return savedPlan?.shareKey || savedPlan?.sourceId || savedPlan?.id || "";
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand("copy");
+    textarea.remove();
+    return copied;
+  }
+}
 
 function DisqusComments() {
   useEffect(() => {
@@ -293,15 +393,24 @@ export default function Home() {
   const [answer, setAnswer] = useState(null);
   const [answerStatus, setAnswerStatus] = useState("idle");
   const [sharedPlans, setSharedPlans] = useState([]);
+  const sharedPlansRef = useRef([]);
   const [communityGrade, setCommunityGrade] = useState("전체");
   const [contactStatus, setContactStatus] = useState("idle");
   const [contactMessage, setContactMessage] = useState("");
+  const [shareStatus, setShareStatus] = useState("");
+  const [editingPlan, setEditingPlan] = useState(null);
+  const [customPlaylists, setCustomPlaylists] = useState([]);
+  const [playlistForm, setPlaylistForm] = useState({ title: "", url: "", lyrics: "무가사" });
 
   useEffect(() => {
     const savedUser = localStorage.getItem("study-flow-user");
     if (savedUser) setUser(JSON.parse(savedUser));
     const shared = localStorage.getItem("study-flow-shared");
-    if (shared) setSharedPlans(JSON.parse(shared));
+    if (shared) {
+      const parsed = JSON.parse(shared);
+      sharedPlansRef.current = parsed;
+      setSharedPlans(parsed);
+    }
   }, []);
 
   useEffect(() => {
@@ -346,6 +455,35 @@ export default function Home() {
   }, [plans, user]);
 
   useEffect(() => {
+    if (!user) return;
+    try {
+      const saved = localStorage.getItem(`study-flow-playlists-${user.id}`);
+      const parsed = saved ? JSON.parse(saved) : [];
+      setCustomPlaylists(parsed.flatMap((playlist) => {
+        let normalized = getPlaylistEmbed(playlist.url);
+        if (!playlist.linkKey && normalized?.provider === "YouTube") {
+          const legacyUrl = new URL(playlist.url);
+          const legacyListId = legacyUrl.searchParams.get("list");
+          if (legacyUrl.pathname === "/playlist" && /^RD[a-zA-Z0-9_-]{11}$/.test(legacyListId || "")) {
+            const videoId = legacyListId.slice(2);
+            normalized = getPlaylistEmbed(`https://www.youtube.com/watch?v=${videoId}&list=${legacyListId}&start_radio=1`);
+          }
+        }
+        return normalized ? [{ ...playlist, ...normalized }] : [];
+      }));
+    } catch {
+      setCustomPlaylists([]);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    const key = `study-flow-playlists-${user.id}`;
+    if (customPlaylists.length) localStorage.setItem(key, JSON.stringify(customPlaylists));
+    else localStorage.removeItem(key);
+  }, [customPlaylists, user]);
+
+  useEffect(() => {
     if (!currentPlanId || !plan.length) return;
     setPlans((current) => current.map((savedPlan) => savedPlan.id === currentPlanId ? { ...savedPlan, items: plan } : savedPlan));
   }, [plan, currentPlanId]);
@@ -363,6 +501,16 @@ export default function Home() {
     }, 1000);
     return () => clearInterval(timer);
   }, [timerRunning]);
+
+  useEffect(() => {
+    if (!shareStatus) return;
+    const timeout = setTimeout(() => setShareStatus(""), 3200);
+    return () => clearTimeout(timeout);
+  }, [shareStatus]);
+
+  useEffect(() => {
+    sharedPlansRef.current = sharedPlans;
+  }, [sharedPlans]);
 
   const createPlan = (event) => {
     event.preventDefault();
@@ -425,6 +573,51 @@ export default function Home() {
     }
   };
 
+  const startEditingPlan = (savedPlan) => {
+    setEditingPlan({
+      ...savedPlan,
+      items: savedPlan.items.map((item) => ({ ...item })),
+    });
+    setView("edit");
+  };
+
+  const updateEditingItem = (id, field, value) => {
+    setEditingPlan((current) => ({
+      ...current,
+      items: current.items.map((item) => item.id === id ? { ...item, [field]: value } : item),
+    }));
+  };
+
+  const saveEditedPlan = (event) => {
+    event.preventDefault();
+    if (!editingPlan?.name.trim() || !editingPlan.subject.trim() || !editingPlan.range.trim()) {
+      setShareStatus("계획 이름, 과목과 범위를 모두 입력해주세요.");
+      return;
+    }
+    if (!editingPlan.items.length || editingPlan.items.some((item) => !item.task.trim() || Number(item.minutes) < 1)) {
+      setShareStatus("공부 일정의 내용과 시간을 확인해주세요.");
+      return;
+    }
+
+    const updated = {
+      ...editingPlan,
+      name: editingPlan.name.trim(),
+      subject: editingPlan.subject.trim(),
+      range: editingPlan.range.trim(),
+      items: editingPlan.items.map((item) => ({ ...item, minutes: Number(item.minutes) })),
+    };
+    setPlans((current) => current.map((savedPlan) => savedPlan.id === updated.id ? updated : savedPlan));
+    if (currentPlanId === updated.id) {
+      setPlan(updated.items);
+      setSubject(updated.subject);
+      setRange(updated.range);
+      setExamDate(updated.examDate);
+    }
+    setEditingPlan(null);
+    setView("library");
+    setShareStatus(`${updated.name}의 수정 내용을 저장했어요.`);
+  };
+
   const changeTimer = (value) => {
     setTimerMode(value);
     setTimerSeconds(value * 60);
@@ -445,6 +638,7 @@ export default function Home() {
     setUser(null);
     setPlans([]);
     setPlan([]);
+    setCustomPlaylists([]);
     setView("form");
   };
 
@@ -492,15 +686,142 @@ export default function Home() {
   };
 
   const shareCurrentPlan = () => {
-    if (!activePlan || sharedPlans.some((item) => item.sourceId === activePlan.id && item.author === user.name)) return;
-    const shared = { ...activePlan, id: `shared-${Date.now()}`, sourceId: activePlan.id, author: user.name, grade: activePlan.grade || user.grade, likes: 0 };
-    const next = [shared, ...sharedPlans];
+    if (!activePlan) {
+      setShareStatus("공유할 계획을 먼저 선택해주세요.");
+      return;
+    }
+    if (activePlan.importedFromCommunity || (activePlan.sourceId && activePlan.author)) {
+      setShareStatus("계획 둘러보기에서 가져온 계획은 다시 게시할 수 없어요.");
+      return;
+    }
+    const shareKey = getPlanShareKey(activePlan);
+    if (sharedPlansRef.current.some((item) => getPlanShareKey(item) === shareKey && (item.ownerId === user.id || item.author === user.name))) {
+      setShareStatus("이미 커뮤니티에 게시한 계획이에요.");
+      return;
+    }
+    const shared = {
+      ...activePlan,
+      id: `shared-${Date.now()}`,
+      sourceId: activePlan.id,
+      shareKey,
+      ownerId: user.id,
+      author: user.name,
+      grade: activePlan.grade || user.grade,
+      likes: 0,
+      items: activePlan.items.map((item) => ({ ...item })),
+    };
+    const next = [shared, ...sharedPlansRef.current];
+    sharedPlansRef.current = next;
     setSharedPlans(next);
     localStorage.setItem("study-flow-shared", JSON.stringify(next));
+    setShareStatus("커뮤니티에 계획을 게시했어요.");
+  };
+
+  const deleteSharedPlan = (shared) => {
+    const isOwner = shared.ownerId === user.id || (!shared.ownerId && shared.sourceId && shared.author === user.name);
+    if (!isOwner) return;
+    if (!window.confirm("커뮤니티에서 이 게시 계획을 삭제할까요? 보관함의 원본 계획은 그대로 유지됩니다.")) return;
+    const next = sharedPlansRef.current.filter((item) => item.id !== shared.id);
+    sharedPlansRef.current = next;
+    setSharedPlans(next);
+    localStorage.setItem("study-flow-shared", JSON.stringify(next));
+    setShareStatus("커뮤니티 게시물을 삭제했어요. 보관함 원본은 유지됩니다.");
+  };
+
+  const addCustomPlaylist = (event) => {
+    event.preventDefault();
+    const parsed = getPlaylistEmbed(playlistForm.url);
+    if (!playlistForm.title.trim()) {
+      setShareStatus("플레이리스트 이름을 입력해주세요.");
+      return;
+    }
+    if (!parsed) {
+      setShareStatus("Spotify 플레이리스트 또는 YouTube 영상·재생목록 링크를 확인해주세요.");
+      return;
+    }
+    const playlist = {
+      id: `playlist-${Date.now()}`,
+      title: playlistForm.title.trim(),
+      lyrics: playlistForm.lyrics,
+      createdAt: new Date().toISOString(),
+      ...parsed,
+    };
+    const isReplacing = customPlaylists.some((item) => (item.linkKey || item.url) === (parsed.linkKey || parsed.url));
+    setCustomPlaylists((current) => [playlist, ...current.filter((item) => (item.linkKey || item.url) !== (parsed.linkKey || parsed.url))]);
+    setPlaylistForm({ title: "", url: "", lyrics: "무가사" });
+    setShareStatus(isReplacing ? `${playlist.title} 링크를 새 카드로 다시 등록했어요.` : `${playlist.title}을 나의 플레이리스트에 추가했어요.`);
+  };
+
+  const shareCustomPlaylist = async (playlist) => {
+    const shareData = {
+      title: `[공부하자!] ${playlist.title}`,
+      text: `${playlist.lyrics} 공부 음악 · ${playlist.provider} 플레이리스트`,
+      url: playlist.url,
+    };
+    setShareStatus(`${playlist.title} 공유 링크를 준비했어요.`);
+    if (navigator.share && (!navigator.canShare || navigator.canShare(shareData))) {
+      try {
+        await navigator.share(shareData);
+        setShareStatus(`${playlist.title}을 공유했어요.`);
+        return;
+      } catch (shareError) {
+        if (shareError?.name === "AbortError") {
+          setShareStatus("플레이리스트 공유를 취소했어요.");
+          return;
+        }
+      }
+    }
+    const copied = await copyText(playlist.url);
+    setShareStatus(copied ? `${playlist.title} 링크를 복사했어요.` : "공유하지 못했어요. 원본에서 열기를 이용해주세요.");
+  };
+
+  const deleteCustomPlaylist = (playlist) => {
+    if (!window.confirm(`${playlist.title}을 나의 플레이리스트에서 삭제할까요?`)) return;
+    setCustomPlaylists((current) => current.filter((item) => item.id !== playlist.id));
+    setShareStatus(`${playlist.title}을 삭제했어요.`);
+  };
+
+  const shareSavedPlan = async (savedPlan) => {
+    const schedule = savedPlan.items
+      .map((item) => `${item.done ? "✓" : "□"} ${item.label} · ${item.task} (${item.minutes}분)`)
+      .join("\n");
+    const text = [
+      `[공부하자!] ${savedPlan.name}`,
+      `${savedPlan.subject} · 시험일 ${savedPlan.examDate || "미정"}`,
+      `범위: ${savedPlan.range}`,
+      "",
+      schedule,
+      "",
+      "공부하자!에서 만든 계획이에요.",
+    ].join("\n");
+    const shareData = {
+      title: `${savedPlan.subject} 공부 계획`,
+      text,
+      url: DISQUS_URL,
+    };
+
+    try {
+      if (navigator.share && (!navigator.canShare || navigator.canShare(shareData))) {
+        await navigator.share(shareData);
+        setShareStatus(`${savedPlan.name}을 공유했어요.`);
+      } else {
+        await navigator.clipboard.writeText(`${text}\n${DISQUS_URL}`);
+        setShareStatus(`${savedPlan.name}을 클립보드에 복사했어요.`);
+      }
+    } catch (shareError) {
+      if (shareError?.name !== "AbortError") {
+        try {
+          await navigator.clipboard.writeText(`${text}\n${DISQUS_URL}`);
+          setShareStatus(`${savedPlan.name}을 클립보드에 복사했어요.`);
+        } catch {
+          setShareStatus("공유하지 못했어요. 잠시 후 다시 시도해주세요.");
+        }
+      }
+    }
   };
 
   const copySharedPlan = (shared) => {
-    const copied = { ...shared, id: `plan-${Date.now()}`, name: `계획 ${plans.length + 1}`, createdAt: new Date().toISOString(), items: shared.items.map((item, index) => ({ ...item, id: `${Date.now()}-${index}`, done: false })) };
+    const copied = { ...shared, id: `plan-${Date.now()}`, shareKey: getPlanShareKey(shared), importedFromCommunity: true, name: `계획 ${plans.length + 1}`, createdAt: new Date().toISOString(), items: shared.items.map((item, index) => ({ ...item, id: `${Date.now()}-${index}`, done: false })) };
     setPlans((current) => [copied, ...current]);
     openPlan(copied);
   };
@@ -538,6 +859,10 @@ export default function Home() {
   const doneCount = plan.filter((item) => item.done).length;
   const progress = plan.length ? Math.round((doneCount / plan.length) * 100) : 0;
   const activePlan = plans.find((savedPlan) => savedPlan.id === currentPlanId);
+  const isCommunityImportedPlan = Boolean(activePlan?.importedFromCommunity || (activePlan?.sourceId && activePlan?.author));
+  const hasSharedActivePlan = Boolean(activePlan && sharedPlans.some(
+    (item) => getPlanShareKey(item) === getPlanShareKey(activePlan) && (item.ownerId === user?.id || item.author === user?.name)
+  ));
   const studyHelp = getStudyHelp(activePlan?.subject || subject, activePlan?.range || range);
   const communityPlans = [
     { id: "sample-1", name: "7일 완성 계획", grade: "중2", subject: "수학", range: "경우의 수와 확률", author: "공부별", likes: 18, items: makePlan({ subject: "수학", examDate: defaultExam, range: "경우의 수, 확률의 뜻, 확률 계산", days: DEFAULT_DAYS, minutes: 40 }) },
@@ -702,7 +1027,8 @@ export default function Home() {
         </button>
         <div className="nav-right">
           <button className="user-badge" onClick={logout}>{user.grade} · {user.name} <small>로그아웃</small></button>
-          <button className="nav-link" onClick={() => setView("community")}>계획 둘러보기</button>
+          <button className="nav-link community-nav" onClick={() => setView("community")}>계획 둘러보기</button>
+          <button className="nav-link" onClick={() => setView("music")}>노래</button>
           <button className="nav-link contact-nav" onClick={() => setView("contact")}>제휴 문의</button>
           <button className="nav-link" onClick={() => setView("library")}>
             계획 보관함 <b>{plans.length}</b>
@@ -711,7 +1037,47 @@ export default function Home() {
         </div>
       </nav>
 
-      {view === "contact" ? contactPage : view === "form" ? (
+      {shareStatus && <div className="action-toast" role="status" aria-live="polite">✓ {shareStatus}</div>}
+
+      {view === "contact" ? contactPage : view === "edit" && editingPlan ? (
+        <section className="edit-shell">
+          <header className="edit-header">
+            <div>
+              <p className="eyebrow">EDIT STUDY PLAN</p>
+              <h1>계획 수정하기</h1>
+              <p>기본 정보와 각 날짜의 공부 내용·시간을 직접 바꿀 수 있어요.</p>
+            </div>
+            <button className="ghost-button" type="button" onClick={() => { setEditingPlan(null); setView("library"); }}>수정 취소</button>
+          </header>
+          <form className="edit-form" onSubmit={saveEditedPlan}>
+            <div className="edit-basics">
+              <label><span>계획 이름</span><input value={editingPlan.name} onChange={(event) => setEditingPlan((current) => ({ ...current, name: event.target.value }))} /></label>
+              <label><span>과목</span><input value={editingPlan.subject} onChange={(event) => setEditingPlan((current) => ({ ...current, subject: event.target.value }))} /></label>
+              <label><span>시험 날짜</span><input type="date" value={editingPlan.examDate || ""} onChange={(event) => setEditingPlan((current) => ({ ...current, examDate: event.target.value }))} /></label>
+              <label className="edit-range"><span>시험 범위</span><textarea rows="3" value={editingPlan.range} onChange={(event) => setEditingPlan((current) => ({ ...current, range: event.target.value }))} /></label>
+            </div>
+            <div className="edit-schedule-heading">
+              <div><span>SCHEDULE</span><h2>공부 일정</h2></div>
+              <p>게시했던 커뮤니티 계획에는 이 수정이 자동 반영되지 않아요.</p>
+            </div>
+            <div className="edit-schedule">
+              {editingPlan.items.map((item, index) => (
+                <div className="edit-schedule-row" key={item.id}>
+                  <b>{index + 1}</b>
+                  <span>{item.label}</span>
+                  <label><span>공부 내용</span><input value={item.task} onChange={(event) => updateEditingItem(item.id, "task", event.target.value)} /></label>
+                  <label><span>시간(분)</span><input type="number" min="1" max="600" value={item.minutes} onChange={(event) => updateEditingItem(item.id, "minutes", event.target.value)} /></label>
+                  <button type="button" aria-label={`${item.label} 일정 삭제`} disabled={editingPlan.items.length === 1} onClick={() => setEditingPlan((current) => ({ ...current, items: current.items.filter((entry) => entry.id !== item.id) }))}>삭제</button>
+                </div>
+              ))}
+            </div>
+            <div className="edit-actions">
+              <button className="ghost-button" type="button" onClick={() => { setEditingPlan(null); setView("library"); }}>취소</button>
+              <button className="primary-button compact" type="submit">수정 내용 저장 <span>→</span></button>
+            </div>
+          </form>
+        </section>
+      ) : view === "form" ? (
         <section className="planner-shell">
           <div className="intro">
             <p className="eyebrow">STUDY PLANNER · 01</p>
@@ -790,17 +1156,130 @@ export default function Home() {
           </header>
           <div className="community-notice">현재는 이 브라우저 안에서 작동하는 체험 커뮤니티예요. 실제 다중 사용자 공유는 서버 연결 후 사용할 수 있어요.</div>
           <div className="library-grid">
-            {communityPlans.map((shared) => (
-              <article className="library-card community-card" key={shared.id}>
+            {communityPlans.map((shared) => {
+              const isOwnPost = shared.ownerId === user.id || (!shared.ownerId && shared.sourceId && shared.author === user.name);
+              return (
+              <article className={`library-card community-card ${isOwnPost ? "own-post" : ""}`} key={shared.id}>
                 <div className="library-number">♡ {shared.likes || 0}</div>
-                <span className="subject-chip">{shared.grade} · {shared.subject}</span>
+                <span className="subject-chip">{shared.grade} · {shared.subject}{isOwnPost ? " · 내가 게시" : ""}</span>
                 <h2>{shared.range}</h2>
                 <p>by {shared.author} · {shared.name} · 총 {shared.items.length}회</p>
                 <div className="community-preview">“하루씩 따라가며 완료 체크할 수 있어요.”</div>
-                <div className="library-actions"><button onClick={() => copySharedPlan(shared)}>이 계획 따라하기 <span>→</span></button></div>
+                <div className="library-actions">
+                  <button onClick={() => copySharedPlan(shared)}>이 계획 따라하기 <span>→</span></button>
+                  {isOwnPost && <button className="delete-button" onClick={() => deleteSharedPlan(shared)}>게시물 삭제</button>}
+                </div>
+              </article>
+            );})}
+          </div>
+        </section>
+      ) : view === "music" ? (
+        <section className="music-shell">
+          <header className="music-header">
+            <div>
+              <p className="eyebrow">STUDY MUSIC · TEST PLAYLISTS</p>
+              <h1>오래 공부하는 날의 노래</h1>
+              <p>가사 유무에 따라 하나씩 골라두었어요. 공부 흐름에 맞는 재생목록을 선택해보세요.</p>
+            </div>
+            <button className="primary-button compact" onClick={() => setView(currentPlanId ? "plan" : "form")}>계획으로 돌아가기</button>
+          </header>
+
+          <div className="music-grid">
+            {MUSIC_PLAYLISTS.map((playlist) => (
+              <article className="music-card" key={playlist.id}>
+                <div className="music-card-heading">
+                  <span>{playlist.label}</span>
+                  <b>{playlist.duration}</b>
+                </div>
+                <h2>{playlist.title}</h2>
+                <p>{playlist.description}</p>
+                <iframe
+                  title={`${playlist.title} Spotify 플레이어`}
+                  src={playlist.embedUrl}
+                  width="100%"
+                  height="352"
+                  loading="lazy"
+                  allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+                />
+                <div className="music-links">
+                  <a href={playlist.playlistUrl} target="_blank" rel="noreferrer">{playlist.provider}에서 열기 ↗</a>
+                  <a href={playlist.policyUrl} target="_blank" rel="noreferrer">{playlist.policyLabel} ↗</a>
+                </div>
               </article>
             ))}
           </div>
+
+          <section className="custom-playlist-section" aria-labelledby="custom-playlist-title">
+            <div className="custom-playlist-heading">
+              <div>
+                <p className="eyebrow">MY PLAYLIST LINKS</p>
+                <h2 id="custom-playlist-title">나만의 플레이리스트</h2>
+                <p>Spotify 플레이리스트·곡·앨범이나 YouTube 영상·Shorts·재생목록 링크를 붙여 넣어 한곳에 모으고 친구에게 공유하세요.</p>
+              </div>
+              <span>{customPlaylists.length}개 저장</span>
+            </div>
+
+            <form className="playlist-add-form" onSubmit={addCustomPlaylist}>
+              <label>
+                <span>플레이리스트 이름</span>
+                <input value={playlistForm.title} onChange={(event) => setPlaylistForm((current) => ({ ...current, title: event.target.value }))} placeholder="예: 수학 문제 풀이용" maxLength={60} />
+              </label>
+              <label className="playlist-url-field">
+                <span>외부 플레이리스트 URL</span>
+                <input type="url" inputMode="url" value={playlistForm.url} onChange={(event) => setPlaylistForm((current) => ({ ...current, url: event.target.value }))} placeholder="https://www.youtube.com/watch?v=..." />
+              </label>
+              <label>
+                <span>가사 구분</span>
+                <select value={playlistForm.lyrics} onChange={(event) => setPlaylistForm((current) => ({ ...current, lyrics: event.target.value }))}>
+                  <option>무가사</option>
+                  <option>가사 있음</option>
+                  <option>혼합</option>
+                </select>
+              </label>
+              <button className="primary-button compact" type="submit">링크 추가 <span>＋</span></button>
+            </form>
+            <p className="playlist-form-help">입력한 주소를 바꾸지 않고 그대로 저장하며, 원본 보기와 공유에도 같은 주소를 사용해요.</p>
+
+            {customPlaylists.length ? (
+              <div className="custom-playlist-grid">
+                {customPlaylists.map((playlist) => (
+                  <article className="custom-playlist-card" key={playlist.id}>
+                    <div className="custom-playlist-meta"><span>{playlist.provider}</span><b>{playlist.lyrics}</b></div>
+                    <h3>{playlist.title}</h3>
+                    {playlist.embedUrl ? (
+                      <iframe
+                        title={`${playlist.title} ${playlist.provider} 플레이어`}
+                        src={playlist.embedUrl}
+                        width="100%"
+                        height="240"
+                        loading="lazy"
+                        allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+                        allowFullScreen
+                      />
+                    ) : (
+                      <a className="external-playlist-link" href={playlist.url} target="_blank" rel="noreferrer">
+                        <span>▶</span>
+                        <strong>{playlist.provider}에서 재생하기</strong>
+                        <small>내부 재생을 지원하지 않는 링크는 {playlist.provider} 앱이나 웹에서 안전하게 열어요.</small>
+                      </a>
+                    )}
+                    <div className="custom-playlist-actions">
+                      <a href={playlist.url} target="_blank" rel="noreferrer">원본에서 열기 ↗</a>
+                      <button type="button" onClick={() => shareCustomPlaylist(playlist)}>공유</button>
+                      <button className="delete-button" type="button" onClick={() => deleteCustomPlaylist(playlist)}>삭제</button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <div className="empty-playlist"><span>♫</span><p>아직 추가한 링크가 없어요. 좋아하는 공부 플레이리스트를 등록해보세요.</p></div>
+            )}
+          </section>
+
+          <aside className="music-rights-note">
+            <strong>음원 이용 안내</strong>
+            <p>사이트는 음원을 직접 저장하거나 배포하지 않고 공식 Spotify 플레이어로 연결합니다. “저작권 안전”은 저작권이 없다는 뜻이 아니며, 영상·방송 등에 다시 사용할 때는 각 곡과 제작자의 최신 이용 조건 및 표기 방법을 반드시 확인하세요.</p>
+          </aside>
         </section>
       ) : view === "library" ? (
         <section className="library-shell">
@@ -828,6 +1307,8 @@ export default function Home() {
                     <div className="library-meta"><strong>{savedProgress}% 완료</strong><span>{completed}/{savedPlan.items.length}</span></div>
                     <div className="library-actions">
                       <button onClick={() => openPlan(savedPlan)}>계획 열기 <span>→</span></button>
+                      <button className="edit-button" onClick={() => startEditingPlan(savedPlan)}>수정</button>
+                      <button className="share-button" onClick={() => shareSavedPlan(savedPlan)}>공유</button>
                       <button className="delete-button" onClick={() => deletePlan(savedPlan.id)}>삭제</button>
                     </div>
                   </article>
@@ -852,7 +1333,11 @@ export default function Home() {
               <p>{plan.length}번의 공부로 시험 준비를 끝내요.</p>
             </div>
             <div className="result-actions">
-              <button className="ghost-button" onClick={shareCurrentPlan}>커뮤니티에 공유</button>
+              {!isCommunityImportedPlan && (
+                <button className={`ghost-button ${hasSharedActivePlan ? "shared" : ""}`} onClick={shareCurrentPlan} disabled={hasSharedActivePlan}>
+                  {hasSharedActivePlan ? "✓ 커뮤니티 게시 완료" : "커뮤니티에 공유"}
+                </button>
+              )}
               <button className="primary-button compact" onClick={() => setView("library")}>보관함 보기</button>
             </div>
           </header>
