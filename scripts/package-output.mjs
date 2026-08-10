@@ -127,7 +127,7 @@ export default {
       if (assetUrl.pathname === "/") {
         assetUrl.pathname = "/index.html";
       } else if (!assetUrl.pathname.includes(".")) {
-        assetUrl.pathname = \`\${assetUrl.pathname.replace(/\\/$/, "")}.html\`;
+        assetUrl.pathname = \`\${assetUrl.pathname.replace(/\\/$/, "")}/index.html\`;
       }
       return env.ASSETS.fetch(new Request(assetUrl, request));
     }

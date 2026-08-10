@@ -4,6 +4,6 @@ export default function robots() {
       userAgent: "*",
       allow: "/",
     },
-    sitemap: "https://study-flow-planner.msms110706.chatgpt.site/sitemap.xml",
+    sitemap: "https://ai-tast.pages.dev/sitemap.xml",
   };
 }

@@ -2,7 +2,7 @@ import "./globals.css";
 import "./content.css";
 
 export const metadata = {
-  metadataBase: new URL("https://study-flow-planner.msms110706.chatgpt.site"),
+  metadataBase: new URL("https://ai-tast.pages.dev"),
   title: {
     default: "공부하자 — 시험 공부 플래너와 학습 가이드",
     template: "%s | 공부하자",

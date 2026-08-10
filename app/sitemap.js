@@ -1,4 +1,4 @@
-const baseUrl = "https://study-flow-planner.msms110706.chatgpt.site";
+const baseUrl = "https://ai-tast.pages.dev";
 
 export default function sitemap() {
   const routes = [

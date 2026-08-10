@@ -1,4 +1,4 @@
 User-Agent: *
 Allow: /
 
-Sitemap: https://study-flow-planner.msms110706.chatgpt.site/sitemap.xml
+Sitemap: https://ai-tast.pages.dev/sitemap.xml

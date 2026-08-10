@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 
 const DAY_NAMES = ["일", "월", "화", "수", "목", "금", "토"];
 const DEFAULT_DAYS = [1, 2, 3, 4, 5, 6];
-const DISQUS_URL = "https://study-flow-planner.msms110706.chatgpt.site/";
+const DISQUS_URL = "https://ai-tast.pages.dev/";
 
 function DisqusComments() {
   useEffect(() => {
