@@ -106,6 +106,16 @@ async function copyText(text) {
   }
 }
 
+async function readJsonResponse(response) {
+  const text = await response.text();
+  if (!text.trim()) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {};
+  }
+}
+
 function DisqusComments() {
   useEffect(() => {
     window.disqus_config = function () {
@@ -683,8 +693,10 @@ export default function Home() {
     setLoginStatus("loading"); setLoginError("");
     try {
       const response = await fetch("/api/account", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: loginName.trim(), pin: loginPin, grade, isUnder13: ageGroup === "under13" }) });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "로그인하지 못했어요.");
+      const result = await readJsonResponse(response);
+      if (!response.ok || !result.ok || !result.token || !result.user) {
+        throw new Error(result.error || "로그인 서버의 응답이 올바르지 않아요. 잠시 후 다시 시도해주세요.");
+      }
       const legacyId = loginName.trim().toLowerCase().replace(/\s+/g, "-");
       const legacyPlans = localStorage.getItem(`study-flow-plans-${legacyId}`);
       if (legacyPlans && !localStorage.getItem(`study-flow-plans-${result.user.id}`)) {

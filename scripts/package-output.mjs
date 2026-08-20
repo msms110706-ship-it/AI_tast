@@ -50,15 +50,15 @@ function normalizeName(value) {
 
 async function account(request, env) {
   const store = dataStore(env);
-  if (!store) return json({ error: "계정 저장소가 아직 연결되지 않았어요. 관리자에게 STUDY_DATA 설정을 요청해주세요." }, 503);
+  if (!store) return json({ ok: false, error: "계정 저장소가 아직 연결되지 않았어요. 관리자에게 STUDY_DATA 설정을 요청해주세요." }, 503);
   let body;
-  try { body = await request.json(); } catch { return json({ error: "로그인 형식이 올바르지 않아요." }, 400); }
+  try { body = await request.json(); } catch { return json({ ok: false, error: "로그인 형식이 올바르지 않아요." }, 400); }
   const name = String(body.name || "").trim().slice(0, 30);
   const normalized = normalizeName(name);
   const pin = String(body.pin || "");
   const grade = String(body.grade || "").trim();
-  if (name.length < 2 || !/^\\d{6,8}$/.test(pin)) return json({ error: "별명은 2자 이상, 로그인 코드는 숫자 6~8자리로 입력해주세요." }, 400);
-  if (!/^(초[4-6]|중[1-3]|고[1-3])$/.test(grade)) return json({ error: "학년을 확인해주세요." }, 400);
+  if (name.length < 2 || !/^\\d{6,8}$/.test(pin)) return json({ ok: false, error: "별명은 2자 이상, 로그인 코드는 숫자 6~8자리로 입력해주세요." }, 400);
+  if (!/^(초[4-6]|중[1-3]|고[1-3])$/.test(grade)) return json({ ok: false, error: "학년을 확인해주세요." }, 400);
 
   const accountKey = \`account:\${await sha256(normalized)}\`;
   let saved = await store.get(accountKey, "json");
@@ -67,12 +67,12 @@ async function account(request, env) {
     saved = { id: crypto.randomUUID(), name, grade, isChild: grade.startsWith("초") || body.isUnder13 === true, salt, iterations: 100000, pinHash: await hashPin(pin, salt), createdAt: new Date().toISOString() };
     await store.put(accountKey, JSON.stringify(saved));
   } else if ((await hashPin(pin, saved.salt)) !== saved.pinHash) {
-    return json({ error: "이미 사용 중인 별명이거나 로그인 코드가 다릅니다." }, 401);
+    return json({ ok: false, error: "이미 사용 중인 별명이거나 로그인 코드가 다릅니다." }, 401);
   }
 
   const token = crypto.randomUUID() + crypto.randomUUID().replaceAll("-", "");
   await store.put(\`session:\${await sha256(token)}\`, saved.id, { expirationTtl: 60 * 60 * 24 * 30 });
-  return json({ token, user: { id: saved.id, name: saved.name, grade: saved.grade, isChild: saved.isChild } });
+  return json({ ok: true, token, user: { id: saved.id, name: saved.name, grade: saved.grade, isChild: saved.isChild }, account: { nickname: saved.name, grade: saved.grade, ageGroup: saved.isChild ? "under13" : "over13" } });
 }
 
 async function sessionUserId(request, store) {
@@ -195,8 +195,13 @@ export default {
       return answerQuestion(request, env);
     }
     if (url.pathname === "/api/account") {
-      if (request.method !== "POST") return json({ error: "POST 요청만 지원해요." }, 405);
-      return account(request, env);
+      if (request.method !== "POST") return json({ ok: false, error: "POST 요청만 지원합니다." }, 405);
+      try {
+        return await account(request, env);
+      } catch (error) {
+        console.error("Account API error", error instanceof Error ? error.message : "unknown");
+        return json({ ok: false, error: "계정 처리 중 오류가 발생했습니다." }, 500);
+      }
     }
     if (url.pathname === "/api/sync") return syncPlans(request, env);
     if (env?.ASSETS?.fetch) {
