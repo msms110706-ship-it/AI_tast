@@ -27,6 +27,78 @@ function collectSources(response) {
   return sources.slice(0, 5);
 }
 
+const encoder = new TextEncoder();
+const bytesToHex = (bytes) => Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
+
+async function sha256(value) {
+  return bytesToHex(await crypto.subtle.digest("SHA-256", encoder.encode(value)));
+}
+
+async function hashPin(pin, salt) {
+  const key = await crypto.subtle.importKey("raw", encoder.encode(pin), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: encoder.encode(salt), iterations: 120000 }, key, 256);
+  return bytesToHex(bits);
+}
+
+function dataStore(env) {
+  return env?.STUDY_DATA || env?.STUDY_PLANS;
+}
+
+function normalizeName(value) {
+  return value.normalize("NFKC").trim().toLocaleLowerCase("ko-KR").replace(/\\s+/g, " ");
+}
+
+async function account(request, env) {
+  const store = dataStore(env);
+  if (!store) return json({ error: "계정 저장소가 아직 연결되지 않았어요. 관리자에게 STUDY_DATA 설정을 요청해주세요." }, 503);
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "로그인 형식이 올바르지 않아요." }, 400); }
+  const name = String(body.name || "").trim().slice(0, 30);
+  const normalized = normalizeName(name);
+  const pin = String(body.pin || "");
+  const grade = String(body.grade || "").trim();
+  if (name.length < 2 || !/^\\d{6,8}$/.test(pin)) return json({ error: "별명은 2자 이상, 로그인 코드는 숫자 6~8자리로 입력해주세요." }, 400);
+  if (!/^(초[4-6]|중[1-3]|고[1-3])$/.test(grade)) return json({ error: "학년을 확인해주세요." }, 400);
+
+  const accountKey = \`account:\${await sha256(normalized)}\`;
+  let saved = await store.get(accountKey, "json");
+  if (!saved) {
+    const salt = crypto.randomUUID();
+    saved = { id: crypto.randomUUID(), name, grade, isChild: grade.startsWith("초") || body.isUnder13 === true, salt, pinHash: await hashPin(pin, salt), createdAt: new Date().toISOString() };
+    await store.put(accountKey, JSON.stringify(saved));
+  } else if ((await hashPin(pin, saved.salt)) !== saved.pinHash) {
+    return json({ error: "이미 사용 중인 별명이거나 로그인 코드가 다릅니다." }, 401);
+  }
+
+  const token = crypto.randomUUID() + crypto.randomUUID().replaceAll("-", "");
+  await store.put(\`session:\${await sha256(token)}\`, saved.id, { expirationTtl: 60 * 60 * 24 * 30 });
+  return json({ token, user: { id: saved.id, name: saved.name, grade: saved.grade, isChild: saved.isChild } });
+}
+
+async function sessionUserId(request, store) {
+  const authorization = request.headers.get("authorization") || "";
+  const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+  if (!token) return null;
+  return store.get(\`session:\${await sha256(token)}\`);
+}
+
+async function syncPlans(request, env) {
+  const store = dataStore(env);
+  if (!store) return json({ error: "계정 저장소가 연결되지 않았어요." }, 503);
+  const userId = await sessionUserId(request, store);
+  if (!userId) return json({ error: "로그인이 만료되었습니다. 다시 로그인해주세요." }, 401);
+  const key = \`plans:\${userId}\`;
+  if (request.method === "GET") return json({ plans: (await store.get(key, "json")) || [] });
+  if (request.method !== "PUT") return json({ error: "GET 또는 PUT 요청만 지원해요." }, 405);
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "계획 형식이 올바르지 않아요." }, 400); }
+  if (!Array.isArray(body.plans) || body.plans.length > 100) return json({ error: "저장할 계획 목록을 확인해주세요." }, 400);
+  const serialized = JSON.stringify(body.plans);
+  if (serialized.length > 1_500_000) return json({ error: "계획 저장 용량을 초과했어요." }, 413);
+  await store.put(key, serialized);
+  return json({ ok: true, savedAt: new Date().toISOString() });
+}
+
 async function answerQuestion(request, env) {
   if (!env?.OPENAI_API_KEY) {
     return json(
@@ -122,6 +194,11 @@ export default {
       if (request.method !== "POST") return json({ error: "POST 요청만 지원해요." }, 405);
       return answerQuestion(request, env);
     }
+    if (url.pathname === "/api/account") {
+      if (request.method !== "POST") return json({ error: "POST 요청만 지원해요." }, 405);
+      return account(request, env);
+    }
+    if (url.pathname === "/api/sync") return syncPlans(request, env);
     if (env?.ASSETS?.fetch) {
       const assetUrl = new URL(url);
       if (assetUrl.pathname === "/") {

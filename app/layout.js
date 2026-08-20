@@ -1,5 +1,6 @@
 import "./globals.css";
 import "./content.css";
+import AdPolicy from "./ad-policy";
 
 export const metadata = {
   metadataBase: new URL("https://ai-tast.pages.dev"),
@@ -37,13 +38,8 @@ export default function RootLayout({ children }) {
     <html lang="ko">
       <head>
         <meta name="google-site-verification" content="rBqp4Tyy2fPAqzE2tK7i1tDEN-9YTNUW9pX3CHAemcc" />
-        <script
-          async
-          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-3450079984401603"
-          crossOrigin="anonymous"
-        />
       </head>
-      <body>{children}</body>
+      <body><AdPolicy />{children}</body>
     </html>
   );
 }

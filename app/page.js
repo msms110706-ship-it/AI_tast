@@ -374,7 +374,15 @@ export default function Home() {
   const defaultExam = useMemo(() => localDateString(addDays(new Date(), 14)), []);
   const [user, setUser] = useState(null);
   const [loginName, setLoginName] = useState("");
+  const [loginPin, setLoginPin] = useState("");
+  const [loginStatus, setLoginStatus] = useState("idle");
+  const [loginError, setLoginError] = useState("");
+  const [syncStatus, setSyncStatus] = useState("idle");
+  const sessionTokenRef = useRef("");
+  const plansHydratedRef = useRef(false);
+  const syncTimerRef = useRef(null);
   const [grade, setGrade] = useState("중2");
+  const [ageGroup, setAgeGroup] = useState("under13");
   const [subject, setSubject] = useState("한국사");
   const [examDate, setExamDate] = useState(defaultExam);
   const [range, setRange] = useState("조선 전기부터 근대 사회까지");
@@ -403,8 +411,13 @@ export default function Home() {
   const [playlistForm, setPlaylistForm] = useState({ title: "", url: "", lyrics: "무가사" });
 
   useEffect(() => {
-    const savedUser = localStorage.getItem("study-flow-user");
-    if (savedUser) setUser(JSON.parse(savedUser));
+    try {
+      const session = JSON.parse(localStorage.getItem("study-flow-session") || "null");
+      if (session?.token && session?.user) {
+        sessionTokenRef.current = session.token;
+        setUser(session.user);
+      }
+    } catch {}
     const shared = localStorage.getItem("study-flow-shared");
     if (shared) {
       const parsed = JSON.parse(shared);
@@ -415,10 +428,13 @@ export default function Home() {
 
   useEffect(() => {
     if (!user) return;
+    plansHydratedRef.current = false;
     const saved = localStorage.getItem(`study-flow-plans-${user.id}`);
+    let localPlans = [];
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
+        localPlans = parsed;
         setPlans(parsed);
         if (parsed.length) {
           const latest = parsed[0];
@@ -437,6 +453,7 @@ export default function Home() {
           const items = JSON.parse(legacy);
           if (items.length) {
             const migrated = { id: `plan-${Date.now()}`, name: "계획 1", subject: items[0]?.subject || "시험 공부", range: "이전에 저장한 범위", examDate: "", createdAt: new Date().toISOString(), items };
+            localPlans = [migrated];
             setPlans([migrated]);
             setPlan(items);
             setCurrentPlanId(migrated.id);
@@ -445,6 +462,28 @@ export default function Home() {
         } catch {}
       }
     }
+    const loadServerPlans = async () => {
+      setSyncStatus("syncing");
+      try {
+        const response = await fetch("/api/sync", { headers: { authorization: `Bearer ${sessionTokenRef.current}` } });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "동기화에 실패했어요.");
+        const serverPlans = Array.isArray(result.plans) ? result.plans : [];
+        const resolved = serverPlans.length ? serverPlans : localPlans;
+        setPlans(resolved);
+        if (resolved.length) openPlan(resolved[0]);
+        plansHydratedRef.current = true;
+        setSyncStatus("saved");
+        // 기존 브라우저 기록을 처음 로그인한 계정의 서버 공간으로 옮긴다.
+        if (!serverPlans.length && localPlans.length) {
+          await fetch("/api/sync", { method: "PUT", headers: { authorization: `Bearer ${sessionTokenRef.current}`, "content-type": "application/json" }, body: JSON.stringify({ plans: localPlans }) });
+        }
+      } catch (loadError) {
+        plansHydratedRef.current = true;
+        setSyncStatus("offline");
+      }
+    };
+    loadServerPlans();
   }, [user]);
 
   useEffect(() => {
@@ -452,6 +491,17 @@ export default function Home() {
     const key = `study-flow-plans-${user.id}`;
     if (plans.length) localStorage.setItem(key, JSON.stringify(plans));
     else localStorage.removeItem(key);
+    if (!plansHydratedRef.current || !sessionTokenRef.current) return;
+    clearTimeout(syncTimerRef.current);
+    setSyncStatus("syncing");
+    syncTimerRef.current = setTimeout(async () => {
+      try {
+        const response = await fetch("/api/sync", { method: "PUT", headers: { authorization: `Bearer ${sessionTokenRef.current}`, "content-type": "application/json" }, body: JSON.stringify({ plans }) });
+        if (!response.ok) throw new Error();
+        setSyncStatus("saved");
+      } catch { setSyncStatus("offline"); }
+    }, 500);
+    return () => clearTimeout(syncTimerRef.current);
   }, [plans, user]);
 
   useEffect(() => {
@@ -624,22 +674,41 @@ export default function Home() {
     setTimerRunning(false);
   };
 
-  const login = (event) => {
+  const login = async (event) => {
     event.preventDefault();
-    if (!loginName.trim()) return;
-    const nextUser = { id: loginName.trim().toLowerCase().replace(/\s+/g, "-"), name: loginName.trim(), grade };
-    localStorage.setItem("study-flow-user", JSON.stringify(nextUser));
-    setUser(nextUser);
-    setPlans([]);
+    if (!loginName.trim() || !/^\d{6,8}$/.test(loginPin)) {
+      setLoginError("별명과 숫자 6~8자리 로그인 코드를 확인해주세요.");
+      return;
+    }
+    setLoginStatus("loading"); setLoginError("");
+    try {
+      const response = await fetch("/api/account", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: loginName.trim(), pin: loginPin, grade, isUnder13: ageGroup === "under13" }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "로그인하지 못했어요.");
+      const legacyId = loginName.trim().toLowerCase().replace(/\s+/g, "-");
+      const legacyPlans = localStorage.getItem(`study-flow-plans-${legacyId}`);
+      if (legacyPlans && !localStorage.getItem(`study-flow-plans-${result.user.id}`)) {
+        localStorage.setItem(`study-flow-plans-${result.user.id}`, legacyPlans);
+      }
+      sessionTokenRef.current = result.token;
+      localStorage.setItem("study-flow-session", JSON.stringify(result));
+      localStorage.removeItem("study-flow-user");
+      setPlans([]); setUser(result.user); setLoginPin("");
+      window.dispatchEvent(new Event("study-session-changed"));
+    } catch (loginFailure) { setLoginError(loginFailure.message); }
+    finally { setLoginStatus("idle"); }
   };
 
   const logout = () => {
     localStorage.removeItem("study-flow-user");
+    localStorage.removeItem("study-flow-session");
+    sessionTokenRef.current = "";
     setUser(null);
     setPlans([]);
     setPlan([]);
     setCustomPlaylists([]);
     setView("form");
+    window.location.reload();
   };
 
   const askCoach = async (event) => {
@@ -951,19 +1020,22 @@ export default function Home() {
           <div className="auth-copy">
             <p className="eyebrow">FREE STUDY PLANNER</p>
             <h1>시험 공부를<br /><em>실행 가능한 계획으로.</em></h1>
-            <p>시험일, 범위, 가능한 요일을 입력하면 남은 기간에 맞춰 학습과 복습 일정을 나눠드립니다. 가입 없이 이 기기에서 무료로 사용할 수 있어요.</p>
+            <p>시험일, 범위, 가능한 요일을 입력하면 남은 기간에 맞춰 학습과 복습 일정을 나눠드립니다. 같은 별명과 로그인 코드로 어느 기기에서나 계획을 이어갈 수 있어요.</p>
             <ul className="hero-points">
               <li>시험 전 마지막 날은 전체 복습으로 자동 배정</li>
               <li>학습 가능 요일과 하루 공부 시간을 직접 설정</li>
-              <li>계획과 완료 기록은 브라우저에만 저장</li>
+              <li>계획과 완료 기록을 계정별로 안전하게 동기화</li>
             </ul>
           </div>
           <form className="auth-card" onSubmit={login}>
-            <div className="card-heading"><span>무료 플래너 시작하기</span><span className="step">LOCAL</span></div>
+            <div className="card-heading"><span>무료 플래너 시작하기</span><span className="step">SYNC</span></div>
             <label><span>이름 또는 별명</span><input value={loginName} onChange={(event) => setLoginName(event.target.value)} placeholder="예: 확률마스터" autoFocus /></label>
+            <label><span>로그인 코드</span><input type="password" inputMode="numeric" minLength="6" maxLength="8" value={loginPin} onChange={(event) => setLoginPin(event.target.value.replace(/\D/g, ""))} placeholder="숫자 6~8자리" autoComplete="current-password" /></label>
             <label><span>현재 학년</span><select value={grade} onChange={(event) => setGrade(event.target.value)}>{["초4","초5","초6","중1","중2","중3","고1","고2","고3"].map((item) => <option key={item}>{item}</option>)}</select></label>
-            <button className="primary-button" type="submit">내 공부방 들어가기 <span>→</span></button>
-            <p className="privacy">비밀번호나 실명을 요구하지 않습니다.</p>
+            <label><span>연령 구분</span><select value={ageGroup} onChange={(event) => setAgeGroup(event.target.value)}><option value="under13">13세 미만</option><option value="over13">13세 이상</option></select></label>
+            <button className="primary-button" type="submit" disabled={loginStatus === "loading"}>{loginStatus === "loading" ? "확인하는 중..." : "내 공부방 들어가기"} <span>→</span></button>
+            {loginError && <p className="form-status error" role="alert">{loginError}</p>}
+            <p className="privacy">처음 입력하면 계정이 만들어집니다. 다른 기기에서도 같은 별명·코드를 입력하세요. 코드는 복구할 수 없으니 보호자와 안전하게 보관하세요.</p>
           </form>
         </section>
 
@@ -996,7 +1068,7 @@ export default function Home() {
         <section className="public-section faq-section" aria-labelledby="faq-title">
           <div className="section-heading"><p className="eyebrow">FAQ</p><h2 id="faq-title">자주 묻는 질문</h2></div>
           <div className="faq-grid">
-            <details><summary>계획은 서버에 저장되나요?</summary><p>아니요. 현재 버전은 별명, 계획, 완료 기록을 사용 중인 브라우저의 로컬 저장소에만 보관합니다. 브라우저 데이터를 삭제하거나 다른 기기를 사용하면 기록이 이어지지 않습니다.</p></details>
+            <details><summary>다른 기기에서도 계획을 볼 수 있나요?</summary><p>네. 같은 별명과 로그인 코드를 입력하면 서버에 동기화된 계획과 완료 기록을 불러옵니다. 인터넷 연결이 잠시 끊기면 이 기기에 저장하고 연결이 돌아온 뒤 다시 동기화합니다.</p></details>
             <details><summary>만든 계획을 그대로 따라야 하나요?</summary><p>아닙니다. 학교 일정이나 이해도에 따라 분량을 바꾸는 것이 좋습니다. 하루를 놓쳤다면 다음 날에 전부 몰아넣기보다 중요도가 낮은 내용을 줄이고 복습일을 지키세요.</p></details>
             <details><summary>학습 코치 답변은 항상 정확한가요?</summary><p>학습 코치는 이해를 돕는 보조 기능입니다. 중요한 시험 정보와 교과 내용은 학교 교재와 담당 교사의 안내를 우선하고, 인터넷 출처가 표시된 경우 원문도 함께 확인하세요.</p></details>
             <details><summary>누가 이용할 수 있나요?</summary><p>초등학교 고학년부터 고등학생까지 사용할 수 있도록 만들었습니다. 학년은 계획을 구분하기 위한 항목이며, 누구나 무료로 플래너와 공개 학습 자료를 이용할 수 있습니다.</p></details>
@@ -1027,6 +1099,7 @@ export default function Home() {
         </button>
         <div className="nav-right">
           <button className="user-badge" onClick={logout}>{user.grade} · {user.name} <small>로그아웃</small></button>
+          <span className={`sync-status ${syncStatus}`}>{syncStatus === "idle" ? "불러오는 중" : syncStatus === "syncing" ? "동기화 중" : syncStatus === "offline" ? "기기 저장됨" : "서버 저장됨"}</span>
           <button className="nav-link community-nav" onClick={() => setView("community")}>계획 둘러보기</button>
           <button className="nav-link" onClick={() => setView("music")}>노래</button>
           <button className="nav-link contact-nav" onClick={() => setView("contact")}>제휴 문의</button>
