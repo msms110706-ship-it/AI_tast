@@ -8,5 +8,5 @@ Next.js 기반 시험 공부 플래너입니다.
 
 - 로컬 개발 또는 배포 미리보기에서도 동일한 이름의 KV 바인딩을 사용하세요.
 - `OPENAI_API_KEY`는 학습 코치의 인터넷 답변에만 필요하며 계획 동기화와는 별개입니다.
-- 로그인 코드는 PBKDF2-SHA256(120,000회) 검증값으로 저장되고 원문은 저장하지 않습니다.
+- 로그인 코드는 PBKDF2-SHA256(100,000회) 검증값으로 저장되고 원문은 저장하지 않습니다. 계정마다 고유 salt와 반복 횟수를 함께 기록합니다.
 - Cloudflare Pages는 프로젝트 루트의 `functions/api/account.js`와 `functions/api/sync.js`를 파일 기반 Pages Functions로 배포합니다. Build output directory는 `out`을 사용하며, `_worker.js`를 함께 두면 `functions` 폴더가 무시되므로 생성하지 않습니다.

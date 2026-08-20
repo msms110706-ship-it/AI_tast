@@ -36,7 +36,7 @@ async function sha256(value) {
 
 async function hashPin(pin, salt) {
   const key = await crypto.subtle.importKey("raw", encoder.encode(pin), "PBKDF2", false, ["deriveBits"]);
-  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: encoder.encode(salt), iterations: 120000 }, key, 256);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: encoder.encode(salt), iterations: 100000 }, key, 256);
   return bytesToHex(bits);
 }
 
@@ -64,7 +64,7 @@ async function account(request, env) {
   let saved = await store.get(accountKey, "json");
   if (!saved) {
     const salt = crypto.randomUUID();
-    saved = { id: crypto.randomUUID(), name, grade, isChild: grade.startsWith("초") || body.isUnder13 === true, salt, pinHash: await hashPin(pin, salt), createdAt: new Date().toISOString() };
+    saved = { id: crypto.randomUUID(), name, grade, isChild: grade.startsWith("초") || body.isUnder13 === true, salt, iterations: 100000, pinHash: await hashPin(pin, salt), createdAt: new Date().toISOString() };
     await store.put(accountKey, JSON.stringify(saved));
   } else if ((await hashPin(pin, saved.salt)) !== saved.pinHash) {
     return json({ error: "이미 사용 중인 별명이거나 로그인 코드가 다릅니다." }, 401);

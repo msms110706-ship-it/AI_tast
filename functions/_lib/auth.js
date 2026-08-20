@@ -1,5 +1,5 @@
 const encoder = new TextEncoder();
-const PIN_ITERATIONS = 120_000;
+const PIN_ITERATIONS = 100_000;
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
 
 function bytesToHex(bytes) {
@@ -10,7 +10,10 @@ export async function sha256(value) {
   return bytesToHex(await crypto.subtle.digest("SHA-256", encoder.encode(value)));
 }
 
-export async function hashPin(pin, salt) {
+export async function hashPin(pin, salt, iterations = PIN_ITERATIONS) {
+  if (!Number.isInteger(iterations) || iterations < 1 || iterations > PIN_ITERATIONS) {
+    throw new Error("UNSUPPORTED_PBKDF2_ITERATIONS");
+  }
   const key = await crypto.subtle.importKey(
     "raw",
     encoder.encode(pin),
@@ -19,7 +22,7 @@ export async function hashPin(pin, salt) {
     ["deriveBits"]
   );
   const bits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", hash: "SHA-256", salt: encoder.encode(salt), iterations: PIN_ITERATIONS },
+    { name: "PBKDF2", hash: "SHA-256", salt: encoder.encode(salt), iterations },
     key,
     256
   );
