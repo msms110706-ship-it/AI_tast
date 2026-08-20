@@ -1,6 +1,6 @@
 const encoder = new TextEncoder();
 const PIN_ITERATIONS = 100_000;
-const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
+export const SESSION_TTL_SECONDS = 2_592_000;
 
 function bytesToHex(bytes) {
   return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -39,11 +39,22 @@ export async function createSession(store, userId) {
   return token;
 }
 
-export async function getSessionUserId(request, store) {
+export function getBearerToken(request) {
   const authorization = request.headers.get("authorization") || "";
-  const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+  return authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+}
+
+export async function getSessionUserId(request, store) {
+  const token = getBearerToken(request);
   if (!token) return null;
   return store.get(`session:${await sha256(token)}`);
+}
+
+export async function deleteSession(request, store) {
+  const token = getBearerToken(request);
+  if (!token) return false;
+  await store.delete(`session:${await sha256(token)}`);
+  return true;
 }
 
 export const passwordPolicy = {

@@ -33,8 +33,13 @@ async function handlePut(context) {
   return json({ ok: true, savedAt: new Date().toISOString() });
 }
 
-export function onRequest(context) {
-  if (context.request.method === "GET") return handleGet(context);
-  if (context.request.method === "PUT") return handlePut(context);
-  return json({ error: "GET 또는 PUT 요청만 지원합니다." }, 405);
+export async function onRequest(context) {
+  try {
+    if (context.request.method === "GET") return await handleGet(context);
+    if (context.request.method === "PUT") return await handlePut(context);
+    return json({ ok: false, error: "GET 또는 PUT 요청만 지원합니다." }, 405);
+  } catch (error) {
+    console.error("Plan sync API error", error instanceof Error ? error.message : "unknown");
+    return json({ ok: false, error: "계획 동기화 중 오류가 발생했습니다." }, 500);
+  }
 }

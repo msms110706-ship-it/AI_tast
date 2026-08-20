@@ -71,7 +71,7 @@ async function account(request, env) {
   }
 
   const token = crypto.randomUUID() + crypto.randomUUID().replaceAll("-", "");
-  await store.put(\`session:\${await sha256(token)}\`, saved.id, { expirationTtl: 60 * 60 * 24 * 30 });
+  await store.put(\`session:\${await sha256(token)}\`, saved.id, { expirationTtl: 2_592_000 });
   return json({ ok: true, token, user: { id: saved.id, name: saved.name, grade: saved.grade, isChild: saved.isChild }, account: { nickname: saved.name, grade: saved.grade, ageGroup: saved.isChild ? "under13" : "over13" } });
 }
 
@@ -80,6 +80,16 @@ async function sessionUserId(request, store) {
   const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
   if (!token) return null;
   return store.get(\`session:\${await sha256(token)}\`);
+}
+
+async function logout(request, env) {
+  const store = dataStore(env);
+  if (!store) return json({ ok: false, error: "계정 저장소가 연결되지 않았습니다." }, 503);
+  const authorization = request.headers.get("authorization") || "";
+  const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+  if (!token) return json({ ok: false, error: "인증 정보가 없습니다." }, 401);
+  await store.delete(\`session:\${await sha256(token)}\`);
+  return json({ ok: true });
 }
 
 async function syncPlans(request, env) {
@@ -204,6 +214,15 @@ export default {
       }
     }
     if (url.pathname === "/api/sync") return syncPlans(request, env);
+    if (url.pathname === "/api/logout") {
+      if (request.method !== "POST") return json({ ok: false, error: "POST 요청만 지원합니다." }, 405);
+      try {
+        return await logout(request, env);
+      } catch (error) {
+        console.error("Logout API error", error instanceof Error ? error.message : "unknown");
+        return json({ ok: false, error: "로그아웃 처리 중 오류가 발생했습니다." }, 500);
+      }
+    }
     if (env?.ASSETS?.fetch) {
       const assetUrl = new URL(url);
       if (assetUrl.pathname === "/") {

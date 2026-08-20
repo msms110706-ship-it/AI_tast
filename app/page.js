@@ -711,7 +711,16 @@ export default function Home() {
     finally { setLoginStatus("idle"); }
   };
 
-  const logout = () => {
+  const logout = async () => {
+    const token = sessionTokenRef.current;
+    if (token) {
+      try {
+        await fetch("/api/logout", {
+          method: "POST",
+          headers: { authorization: `Bearer ${token}` },
+        });
+      } catch {}
+    }
     localStorage.removeItem("study-flow-user");
     localStorage.removeItem("study-flow-session");
     sessionTokenRef.current = "";
