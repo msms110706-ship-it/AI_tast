@@ -329,6 +329,12 @@ small { display: block; color: #7b829c; font-size: 11px; margin-top: 6px; }
 .mistake-list article > span { color: var(--orange); font-size: 10px; font-weight: 800; }
 .mistake-list h2 { font-size: 17px; }.mistake-list h2 b { padding: 3px 6px; color: white; background: var(--orange); font-size: 9px; }
 .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin: 30px 0; }.settings-grid .planner-card { align-self: start; }.danger-card { border-color: #b84646; }
+.settings-card-heading { min-height: 86px; margin-bottom: 24px; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
+.settings-card-heading span { color: var(--blue); font-size: 9px; font-weight: 800; letter-spacing: .13em; }
+.settings-card-heading h2 { margin: 6px 0 0; font-size: 22px; }
+.settings-card-heading p { margin: 8px 0 0; color: #737b96; font-size: 11px; line-height: 1.55; }
+.danger-card .settings-card-heading span { color: #b84646; }
+.danger-card > p { min-height: 48px; color: #6f5260; font-size: 12px; line-height: 1.65; }
 .result-header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 44px; gap: 30px; }
 .result-header h1 { font-size: clamp(40px, 5vw, 66px); }
 .result-header > div > p:last-child { color: #656d8a; margin: 16px 0 0; }
@@ -513,6 +519,8 @@ footer button {
   margin-left: auto; margin-right: 26px; border: 0; padding: 6px; color: var(--paper);
   background: transparent; font-size: 11px; font-weight: 800; text-decoration: underline; text-underline-offset: 4px;
 }
+.app-footer-links { display: flex; align-items: center; gap: 18px; margin-left: auto; margin-right: 26px; }
+.app-footer-links a, .app-footer-links button { margin: 0; padding: 6px 0; border: 0; color: var(--paper); background: transparent; font-size: 11px; font-weight: 800; text-decoration: underline; text-underline-offset: 4px; }
 
 @media (max-width: 800px) {
   .priority-grid, .weekday-minutes { grid-template-columns: 1fr; }
@@ -584,6 +592,8 @@ footer button {
   .plan-item .ghost-button { padding: 7px 8px; font-size: 10px; }
   .result-actions > button { flex: 1 1 140px; margin-top: 0; }
   footer { padding: 0 20px; }
+  footer { flex-wrap: wrap; gap: 8px; padding-top: 16px; padding-bottom: 16px; }
+  .app-footer-links { order: 3; width: 100%; margin: 0; justify-content: center; flex-wrap: wrap; }
   .auth-page { grid-template-columns: 1fr; gap: 45px; padding: 45px 20px 70px; }
   .auth-copy .brand { margin-bottom: 45px; }
   .auth-copy h1 { font-size: 58px; }

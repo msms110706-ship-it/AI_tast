@@ -431,6 +431,8 @@ export default function Home() {
   const [loginName, setLoginName] = useState("");
   const [loginPin, setLoginPin] = useState("");
   const [showLoginPin, setShowLoginPin] = useState(false);
+  const [showCurrentCode, setShowCurrentCode] = useState(false);
+  const [showNewCode, setShowNewCode] = useState(false);
   const [loginStatus, setLoginStatus] = useState("idle");
   const [loginError, setLoginError] = useState("");
   const [syncStatus, setSyncStatus] = useState("idle");
@@ -1196,7 +1198,6 @@ export default function Home() {
           <div>
             <a href="#planner-start">플래너 시작</a>
             <a href="/guides">학습 가이드</a>
-            <a href="/about">서비스 소개</a>
           </div>
         </nav>
 
@@ -1287,7 +1288,6 @@ export default function Home() {
           <button className="nav-link" onClick={() => setView("today")}>오늘의 공부</button>
           <button className="nav-link info-nav" onClick={() => setView("mistakes")}>오답 관리</button>
           <a className="nav-link info-nav" href="/guides">학습 가이드</a>
-          <a className="nav-link info-nav" href="/about">서비스 소개</a>
           <button className="nav-link community-nav" onClick={() => setView("community")}>계획 둘러보기</button>
           <button className="nav-link" onClick={() => setView("music")}>노래</button>
           <button className="nav-link contact-nav" onClick={() => setView("contact")}>제휴 문의</button>
@@ -1317,7 +1317,7 @@ export default function Home() {
         </section>
       ) : view === "settings" ? (
         <section className="today-shell"><header className="library-header"><div><p className="eyebrow">ACCOUNT SETTINGS</p><h1>계정 설정</h1><p>서버 저장 정보: 별명 {user.name}, 학년 {user.grade}, 연령 분류 {user.isChild ? "아동" : "일반"}</p></div></header>
-          <div className="settings-grid"><form className="planner-card" onSubmit={changeLoginCode}><h2>로그인 코드 변경</h2><label><span>현재 코드</span><input type="password" name="currentCode" required /></label><label><span>새 코드</span><input type="password" name="newCode" minLength="8" placeholder="영문·숫자·특수문자 포함" required /></label><button className="primary-button" type="submit">변경 후 모든 기기 로그아웃</button></form><form className="planner-card danger-card" onSubmit={deleteAccount}><h2>계정 및 데이터 삭제</h2><p>계정, 계획, 완료 기록, 오답과 모든 세션을 삭제합니다. 복구할 수 없습니다.</p><label><span>확인을 위해 별명 “{user.name}” 입력</span><input name="confirmation" required /></label><button className="primary-button" type="submit">계정 영구 삭제</button></form></div>
+          <div className="settings-grid"><form className="planner-card" onSubmit={changeLoginCode}><div className="settings-card-heading"><div><span>SECURITY</span><h2>로그인 코드 변경</h2></div><p>변경하면 모든 기기에서 다시 로그인해야 해요.</p></div><label><span>현재 비밀번호</span><div className="password-field"><input type={showCurrentCode ? "text" : "password"} name="currentCode" autoComplete="current-password" required /><button type="button" aria-pressed={showCurrentCode} onClick={() => setShowCurrentCode((visible) => !visible)}>{showCurrentCode ? "숨기기" : "보기"}</button></div></label><label><span>새 비밀번호</span><div className="password-field"><input type={showNewCode ? "text" : "password"} name="newCode" minLength="8" maxLength="64" autoComplete="new-password" placeholder="영문·숫자·특수문자 포함 8자 이상" required /><button type="button" aria-pressed={showNewCode} onClick={() => setShowNewCode((visible) => !visible)}>{showNewCode ? "숨기기" : "보기"}</button></div><small>내부 공백은 사용할 수 없으며 앞뒤 공백은 제거됩니다.</small></label><button className="primary-button" type="submit">비밀번호 변경</button></form><form className="planner-card danger-card" onSubmit={deleteAccount}><div className="settings-card-heading"><div><span>DANGER ZONE</span><h2>계정 및 데이터 삭제</h2></div></div><p>계정, 계획, 완료 기록, 오답과 모든 세션을 삭제합니다. 복구할 수 없습니다.</p><label><span>확인을 위해 별명 “{user.name}” 입력</span><input name="confirmation" required /></label><button className="primary-button" type="submit">계정 영구 삭제</button></form></div>
           {settingsMessage && <p className="form-status" role="status">{settingsMessage}</p>}<button className="ghost-button" onClick={logout}>현재 기기 로그아웃</button> <button className="ghost-button" onClick={logoutAllDevices}>모든 기기에서 로그아웃</button>
         </section>
       ) : view === "edit" && editingPlan ? (
@@ -1751,7 +1751,7 @@ export default function Home() {
 
       <footer>
         <span>공부하자!</span>
-        <button type="button" onClick={() => setView("contact")}>제휴 문의</button>
+        <nav className="app-footer-links" aria-label="서비스 정보"><a href="/guides">학습 가이드</a><a href="/about">서비스 소개</a><button type="button" onClick={() => setView("contact")}>제휴 문의</button></nav>
         <p>완벽한 계획보다, 오늘의 한 걸음.</p>
       </footer>
     </main>
