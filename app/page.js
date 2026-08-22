@@ -430,6 +430,7 @@ export default function Home() {
   const [user, setUser] = useState(null);
   const [loginName, setLoginName] = useState("");
   const [loginPin, setLoginPin] = useState("");
+  const [showLoginPin, setShowLoginPin] = useState(false);
   const [loginStatus, setLoginStatus] = useState("idle");
   const [loginError, setLoginError] = useState("");
   const [syncStatus, setSyncStatus] = useState("idle");
@@ -854,7 +855,10 @@ export default function Home() {
           : response.status >= 500
             ? "로그인 서버에 일시적인 문제가 있어요. 잠시 후 다시 시도해주세요."
             : `로그인 서버 응답을 확인할 수 없어요. (상태 ${response.status})`;
-        throw new Error(apiMessage(result, fallbackMessage));
+        const message = response.status === 401
+          ? "별명 또는 비밀번호가 일치하지 않아요. 기존 계정은 처음 만들 때 사용한 숫자 코드를 그대로 입력해주세요."
+          : apiMessage(result, fallbackMessage);
+        throw new Error(message);
       }
       const legacyId = loginName.trim().toLowerCase().replace(/\s+/g, "-");
       const legacyPlans = localStorage.getItem(`study-flow-plans-${legacyId}`);
@@ -1210,12 +1214,12 @@ export default function Home() {
           <form className="auth-card" onSubmit={login}>
             <div className="card-heading"><span>무료 플래너 시작하기</span><span className="step">SYNC</span></div>
             <label><span>이름 또는 별명</span><input value={loginName} onChange={(event) => setLoginName(event.target.value)} placeholder="예: 확률마스터" autoFocus /></label>
-            <label><span>비밀번호</span><input type="password" minLength="6" maxLength="64" value={loginPin} onChange={(event) => setLoginPin(event.target.value)} placeholder="영문자·숫자·특수문자 포함 8자 이상" autoComplete="current-password" /></label>
+            <label><span>비밀번호</span><div className="password-field"><input type={showLoginPin ? "text" : "password"} minLength="6" maxLength="64" value={loginPin} onChange={(event) => setLoginPin(event.target.value)} placeholder="영문자·숫자·특수문자 포함 8자 이상" autoComplete="current-password" /><button type="button" aria-pressed={showLoginPin} aria-label={showLoginPin ? "비밀번호 숨기기" : "비밀번호 보기"} onClick={() => setShowLoginPin((visible) => !visible)}>{showLoginPin ? "숨기기" : "보기"}</button></div></label>
             <label><span>현재 학년</span><select value={grade} onChange={(event) => setGrade(event.target.value)}>{["초4","초5","초6","중1","중2","중3","고1","고2","고3"].map((item) => <option key={item}>{item}</option>)}</select></label>
             <label><span>연령 구분</span><select value={ageGroup} onChange={(event) => setAgeGroup(event.target.value)}><option value="under13">13세 미만</option><option value="over13">13세 이상</option></select></label>
             <button className="primary-button" type="submit" disabled={loginStatus === "loading"}>{loginStatus === "loading" ? "확인하는 중..." : "내 공부방 들어가기"} <span>→</span></button>
             {loginError && <p className="form-status error" role="alert">{loginError}</p>}
-            <p className="privacy">처음 입력하면 계정이 만들어집니다. 새 비밀번호는 영문자·숫자·특수문자를 모두 포함해 8자 이상으로 만드세요. 기존 숫자 로그인 코드는 그대로 사용할 수 있습니다.</p>
+            <p className="privacy">새 별명을 처음 입력하면 계정이 만들어집니다. 이미 사용한 별명이라면 처음 만들 때 정한 비밀번호가 필요합니다. 새 비밀번호는 영문자·숫자·특수문자를 모두 포함해 8자 이상으로 만드세요. 기존 숫자 로그인 코드는 그대로 사용할 수 있습니다.</p>
           </form>
         </section>
 
