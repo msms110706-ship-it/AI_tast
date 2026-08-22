@@ -107,6 +107,8 @@ async function copyText(text) {
 }
 
 async function readJsonResponse(response) {
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) return {};
   const text = await response.text();
   if (!text.trim()) return {};
   try {
@@ -114,6 +116,10 @@ async function readJsonResponse(response) {
   } catch {
     return {};
   }
+}
+
+function apiMessage(result, fallback) {
+  return typeof result?.error === "string" ? result.error : result?.error?.message || fallback;
 }
 
 function DisqusComments() {
@@ -170,7 +176,20 @@ function addDays(date, amount) {
   return next;
 }
 
-function makePlan({ subject, examDate, range, days, minutes }) {
+const MODERN_PASSWORD = /^(?=.*[A-Za-z])(?=.*\d)(?=.*[^A-Za-z\d\s])\S{8,64}$/;
+const LEGACY_PIN = /^\d{6,8}$/;
+
+function getSubjectPlanStrategy(subject) {
+  const text = subject.toLowerCase();
+  if (/수학|수리|확률|기하/.test(text)) return { learn: (part) => `${part}: 핵심 개념·공식의 조건 확인 → 대표 유형 문제 풀이`, recall: "풀이를 가리고 대표 문제 다시 풀기 → 막힌 지점 한 줄 기록", guide: "수학은 개념 뒤에 반드시 풀이를 붙이고, 답보다 풀이가 끊긴 지점을 확인해요." };
+  if (/영어/.test(text)) return { learn: (part) => `${part}: 핵심 단어 회상 → 문단별 한 줄 요약 → 문법 예문 만들기`, recall: "뜻과 본문을 가리고 말하기 → 틀린 단어·문장만 다시 쓰기", guide: "영어는 단어를 문장 속에서 말하고 쓰며, 긴 글은 문단별 핵심을 요약해요." };
+  if (/국어|문학|독서/.test(text)) return { learn: (part) => `${part}: 지문 읽기 → 문단 핵심 요약 → 선택지 근거 표시`, recall: "글을 덮고 주제·근거 설명하기 → 틀린 선택지의 판단 근거 고치기", guide: "국어는 답만 고르지 않고 선택지의 판단 근거를 지문에서 찾아요." };
+  if (/역사|한국사|사회|윤리|지리/.test(text)) return { learn: (part) => `${part}: 핵심 개념 확인 → 원인·사건·결과 연결표 만들기`, recall: "자료를 가리고 흐름·비교표 다시 그리기 → 빠진 개념 보충", guide: "사회·역사는 낱말만 외우지 않고 원인·사건·결과와 제도·영향을 연결해요." };
+  if (/과학|물리|화학|생명|지구/.test(text)) return { learn: (part) => `${part}: 핵심 원리 이해 → 그림·실험 과정 재구성 → 현상 설명`, recall: "책을 덮고 조건 변화에 따른 결과 설명하기 → 관련 문제로 확인", guide: "과학은 용어 암기 뒤에 원리로 현상을 설명하고 실험 과정을 재구성해요." };
+  return { learn: (part) => `${part}: 핵심 내용 이해 → 책을 덮고 3문장 요약 → 확인 문제`, recall: "자료를 가리고 핵심 내용 회상하기 → 기억나지 않은 부분만 다시 보기", guide: "읽기만 반복하지 않고 자료를 가린 채 기억에서 직접 꺼내요." };
+}
+
+function makePlan({ subject, examDate, range, days, minutes, unitDetails = "", difficulty = "보통", confidence = "보통", importance = "보통", autoMode = true, dayMinutes = {} }) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const end = new Date(`${examDate}T00:00:00`);
@@ -183,42 +202,68 @@ function makePlan({ subject, examDate, range, days, minutes }) {
   if (!studyDates.length) return [];
 
   const rangeText = range.trim();
-  const chunks = rangeText
-    .split(/\n|,|→|~|–|-/)
+  const detailedChunks = unitDetails.trim().split(/\n/).map((line) => line.trim()).filter(Boolean);
+  const chunks = (detailedChunks.length ? detailedChunks : rangeText
+    .split(/\n|,|→|~|–/)
     .map((item) => item.trim())
-    .filter(Boolean);
+    .filter(Boolean));
 
-  return studyDates.map((date, index) => {
-    const progress = (index + 1) / studyDates.length;
+  const strategy = getSubjectPlanStrategy(subject);
+  const learningDateCount = studyDates.filter((_, index) => index !== studyDates.length - 1 && !(studyDates.length >= 5 && (index + 1) % 4 === 0)).length;
+  let learningIndex = 0;
+
+  return studyDates.flatMap((date, index) => {
     const isFinal = index === studyDates.length - 1;
     const isReview = !isFinal && studyDates.length >= 5 && (index + 1) % 4 === 0;
+    const daysLeft = Math.ceil((end - date) / 86400000);
+    const availableMinutes = Math.min(minutes, Number(dayMinutes[date.getDay()] || minutes));
     let task;
+    let studyType = "개념";
 
     if (isFinal) {
-      task = "전체 범위 최종 점검 · 오답 다시 보기";
+      task = "전체 범위: 책을 덮고 핵심 회상 → 오답 재풀이 → 시험 직전 볼 한 장 정리";
+      studyType = "복습";
     } else if (isReview) {
-      task = "지금까지 공부한 범위 복습 · 취약점 보완";
-    } else if (chunks.length > 1) {
-      const chunkIndex = Math.min(
-        chunks.length - 1,
-        Math.floor(progress * chunks.length)
-      );
-      task = `${chunks[chunkIndex]} 집중 학습`;
+      task = strategy.recall;
+      studyType = "복습";
     } else {
-      const start = Math.floor((index / studyDates.length) * 100) + 1;
-      const finish = Math.min(100, Math.floor(progress * 100));
-      task = `${rangeText || "입력한 시험 범위"} 중 ${start}–${finish}% 학습`;
+      const chunkIndex = Math.min(chunks.length - 1, Math.floor((learningIndex / Math.max(1, learningDateCount)) * chunks.length));
+      task = strategy.learn(chunks[chunkIndex] || rangeText || "입력한 시험 범위");
+      learningIndex += 1;
+      if (autoMode && daysLeft <= 3) studyType = "문제풀이";
+      else if (autoMode && daysLeft <= 7) studyType = confidence === "낮음" ? "오답" : "문제풀이";
     }
 
-    return {
-      id: `${localDateString(date)}-${index}`,
+    const unit = chunks[Math.min(chunks.length - 1, Math.max(0, learningIndex - 1))] || rangeText;
+    const base = {
       date: localDateString(date),
       label: `${date.getMonth() + 1}.${date.getDate()} ${DAY_NAMES[date.getDay()]}`,
       subject: subject.trim() || "시험 공부",
-      task,
-      minutes,
+      actualMinutes: 0,
+      unit,
+      difficulty,
+      confidence,
+      importance,
+      guideTip: isFinal ? "시험 전날과 당일 체크리스트" : isReview ? "회상 학습·오답 정리 가이드" : strategy.guide,
       done: false,
     };
+    const makeTask = (suffix, action, taskMinutes, type, target, reviewDate = null) => ({ ...base, id: `${localDateString(date)}-${index}-${suffix}`, task: action, action, minutes: taskMinutes, studyType: type, targetAmount: target, reviewDate });
+    if (isFinal) {
+      const reviewMinutes = Math.max(1, Math.floor(availableMinutes * .5));
+      const readyMinutes = Math.max(1, Math.min(5, Math.floor(availableMinutes * .1)));
+      const errorMinutes = Math.max(1, availableMinutes - reviewMinutes - readyMinutes);
+      return [makeTask("review", "전체 범위를 책 없이 회상하고 핵심 한 장 점검", reviewMinutes, "복습", "전체 범위 1회 회상"), makeTask("errors", "남은 오답을 풀이 가리고 다시 풀기", errorMinutes, "오답", "미해결 오답 전부"), makeTask("ready", "시험 시간·준비물 확인", readyMinutes, "복습", "준비물 체크 완료")];
+    }
+    if (isReview) return [makeTask("recall", strategy.recall, availableMinutes, "복습", "이전 학습 범위 회상 및 오답 재확인")];
+    const conceptMinutes = Math.max(1, Math.floor(availableMinutes * .35));
+    const practiceMinutes = Math.max(1, Math.floor(availableMinutes * .5));
+    const correctionMinutes = Math.max(1, availableMinutes - conceptMinutes - practiceMinutes);
+    const problemCount = Math.max(3, Math.round(practiceMinutes / 4));
+    const reviewDate = localDateString(addDays(date, daysLeft <= 7 ? 1 : 3));
+    const memoryAction = autoMode && daysLeft <= 3 ? `${unit} 암기 항목을 자료 없이 회상 확인` : `${unit} 핵심 개념을 내 말로 정리`;
+    const practiceAction = autoMode && daysLeft <= 3 ? `${unit} 시간 제한 실전 문제 ${problemCount}개 풀이` : autoMode && daysLeft <= 7 ? `${unit} 취약 유형 문제 ${problemCount}개 풀이` : `${unit} 교과서·기본 문제 ${problemCount}개 풀이`;
+    const firstType = autoMode && daysLeft <= 3 ? "암기" : autoMode && daysLeft <= 7 && confidence === "낮음" ? "오답" : "개념";
+    return [makeTask("concept", memoryAction, conceptMinutes, firstType, autoMode && daysLeft <= 3 ? "암기 항목 전부 회상" : "핵심 개념·공식·흐름 1회 정리", reviewDate), makeTask("practice", practiceAction, practiceMinutes, "문제풀이", `${problemCount}문제`, reviewDate), makeTask("correct", `${unit} 틀린 문제 원인 기록 및 핵심 회상`, correctionMinutes, "오답", "틀린 이유와 다음 행동 기록", reviewDate)];
   });
 }
 
@@ -391,12 +436,22 @@ export default function Home() {
   const sessionTokenRef = useRef("");
   const plansHydratedRef = useRef(false);
   const syncTimerRef = useRef(null);
+  const serverRevisionRef = useRef(0);
   const [grade, setGrade] = useState("중2");
   const [ageGroup, setAgeGroup] = useState("under13");
   const [subject, setSubject] = useState("한국사");
   const [examDate, setExamDate] = useState(defaultExam);
   const [range, setRange] = useState("조선 전기부터 근대 사회까지");
   const [minutes, setMinutes] = useState(60);
+  const [unitDetails, setUnitDetails] = useState("");
+  const [difficulty, setDifficulty] = useState("보통");
+  const [confidence, setConfidence] = useState("보통");
+  const [importance, setImportance] = useState("보통");
+  const [autoMode, setAutoMode] = useState(true);
+  const [dayMinutes, setDayMinutes] = useState(Object.fromEntries(DEFAULT_DAYS.map((day) => [day, 60])));
+  const [rescheduleProposal, setRescheduleProposal] = useState(null);
+  const [mistakes, setMistakes] = useState([]);
+  const [settingsMessage, setSettingsMessage] = useState("");
   const [days, setDays] = useState(DEFAULT_DAYS);
   const [plan, setPlan] = useState([]);
   const [plans, setPlans] = useState([]);
@@ -406,6 +461,8 @@ export default function Home() {
   const [timerSeconds, setTimerSeconds] = useState(25 * 60);
   const [timerRunning, setTimerRunning] = useState(false);
   const [timerMode, setTimerMode] = useState(25);
+  const [activeTaskId, setActiveTaskId] = useState(null);
+  const [timerInitialSeconds, setTimerInitialSeconds] = useState(25 * 60);
   const [questionIndex, setQuestionIndex] = useState(0);
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState(null);
@@ -423,8 +480,8 @@ export default function Home() {
   useEffect(() => {
     try {
       const session = JSON.parse(localStorage.getItem("study-flow-session") || "null");
-      if (session?.token && session?.user) {
-        sessionTokenRef.current = session.token;
+      if (session?.user) {
+        sessionTokenRef.current = session.token || "";
         setUser(session.user);
       }
     } catch {}
@@ -477,16 +534,18 @@ export default function Home() {
       try {
         const response = await fetch("/api/sync", { headers: { authorization: `Bearer ${sessionTokenRef.current}` } });
         const result = await response.json();
-        if (!response.ok) throw new Error(result.error || "동기화에 실패했어요.");
+        if (!response.ok) throw new Error(apiMessage(result, "동기화에 실패했어요."));
         const serverPlans = Array.isArray(result.plans) ? result.plans : [];
+        serverRevisionRef.current = Number(result.revision || 0);
         const resolved = serverPlans.length ? serverPlans : localPlans;
         setPlans(resolved);
-        if (resolved.length) openPlan(resolved[0]);
+        if (resolved.length) { openPlan(resolved[0]); setView("today"); }
         plansHydratedRef.current = true;
         setSyncStatus("saved");
         // 기존 브라우저 기록을 처음 로그인한 계정의 서버 공간으로 옮긴다.
         if (!serverPlans.length && localPlans.length) {
-          await fetch("/api/sync", { method: "PUT", headers: { authorization: `Bearer ${sessionTokenRef.current}`, "content-type": "application/json" }, body: JSON.stringify({ plans: localPlans }) });
+          const migrationResponse = await fetch("/api/sync", { method: "PUT", headers: { authorization: `Bearer ${sessionTokenRef.current}`, "content-type": "application/json" }, body: JSON.stringify({ plans: localPlans, revision: serverRevisionRef.current, mutationId: crypto.randomUUID() }) });
+          const migrationResult = await readJsonResponse(migrationResponse); if (migrationResponse.ok) serverRevisionRef.current = Number(migrationResult.revision || serverRevisionRef.current);
         }
       } catch (loadError) {
         plansHydratedRef.current = true;
@@ -501,13 +560,15 @@ export default function Home() {
     const key = `study-flow-plans-${user.id}`;
     if (plans.length) localStorage.setItem(key, JSON.stringify(plans));
     else localStorage.removeItem(key);
-    if (!plansHydratedRef.current || !sessionTokenRef.current) return;
+    if (!plansHydratedRef.current) return;
     clearTimeout(syncTimerRef.current);
     setSyncStatus("syncing");
     syncTimerRef.current = setTimeout(async () => {
       try {
-        const response = await fetch("/api/sync", { method: "PUT", headers: { authorization: `Bearer ${sessionTokenRef.current}`, "content-type": "application/json" }, body: JSON.stringify({ plans }) });
-        if (!response.ok) throw new Error();
+        const response = await fetch("/api/sync", { method: "PUT", headers: { authorization: `Bearer ${sessionTokenRef.current}`, "content-type": "application/json" }, body: JSON.stringify({ plans, revision: serverRevisionRef.current, mutationId: crypto.randomUUID() }) });
+        const result = await readJsonResponse(response);
+        if (!response.ok) { if (response.status === 409) setShareStatus("다른 기기에서 계획이 변경됐어요. 새로고침 후 다시 확인해주세요."); throw new Error(); }
+        serverRevisionRef.current = Number(result.revision || serverRevisionRef.current);
         setSyncStatus("saved");
       } catch { setSyncStatus("offline"); }
     }, 500);
@@ -544,8 +605,16 @@ export default function Home() {
   }, [customPlaylists, user]);
 
   useEffect(() => {
+    if (!user) return;
+    fetch("/api/mistakes", { headers: { authorization: `Bearer ${sessionTokenRef.current}` } }).then(async (response) => {
+      const result = await readJsonResponse(response);
+      if (response.ok && Array.isArray(result.mistakes)) setMistakes(result.mistakes);
+    }).catch(() => {});
+  }, [user]);
+
+  useEffect(() => {
     if (!currentPlanId || !plan.length) return;
-    setPlans((current) => current.map((savedPlan) => savedPlan.id === currentPlanId ? { ...savedPlan, items: plan } : savedPlan));
+    setPlans((current) => current.map((savedPlan) => savedPlan.id === currentPlanId ? { ...savedPlan, items: plan, schemaVersion: 2, revision: Number(savedPlan.revision || 0) + 1, updatedAt: new Date().toISOString() } : savedPlan));
   }, [plan, currentPlanId]);
 
   useEffect(() => {
@@ -587,7 +656,17 @@ export default function Home() {
       setError("공부 가능한 요일을 하나 이상 골라주세요.");
       return;
     }
-    const nextPlan = makePlan({ subject, examDate, range, days, minutes });
+    const nextPlan = makePlan({ subject, examDate, range, days, minutes, unitDetails, difficulty, confidence, importance, autoMode, dayMinutes });
+    const requestedUnits = unitDetails.trim().split(/\n/).map((item) => item.trim()).filter(Boolean);
+    const missingUnits = requestedUnits.filter((unit) => !nextPlan.some((item) => item.unit === unit));
+    if (missingUnits.length) {
+      setError(`현재 가능 시간으로는 ${missingUnits.length}개 단원을 배정할 수 없어요. 약 ${missingUnits.length * minutes}분을 추가하거나 범위를 줄여주세요.`);
+      return;
+    }
+    const weakUnits = [...new Set(mistakes.filter((item) => item.subject === subject && mistakes.filter((entry) => entry.subject === item.subject && entry.unit === item.unit).length >= 2).map((item) => item.unit))];
+    if (weakUnits.length && nextPlan[0]) {
+      nextPlan[0] = { ...nextPlan[0], task: `취약 단원 ${weakUnits.join(", ")} 오답 원인 확인 → 관련 문제 재풀이`, unit: weakUnits.join(", "), studyType: "오답", targetAmount: "반복 오답 전부 재확인" };
+    }
     if (!nextPlan.length) {
       setError("시험 전 공부 가능한 날짜가 없어요. 요일을 다시 골라주세요.");
       return;
@@ -603,6 +682,10 @@ export default function Home() {
       examDate,
       createdAt: new Date().toISOString(),
       items: nextPlan,
+      settings: { unitDetails, difficulty, confidence, importance, autoMode, dayMinutes, maxDailyMinutes: minutes },
+      schemaVersion: 2,
+      revision: 1,
+      updatedAt: new Date().toISOString(),
     };
     setPlan(nextPlan);
     setPlans((current) => [savedPlan, ...current]);
@@ -678,32 +761,108 @@ export default function Home() {
     setShareStatus(`${updated.name}의 수정 내용을 저장했어요.`);
   };
 
+  const proposeReschedule = () => {
+    if (!activePlan) return;
+    const today = localDateString(new Date());
+    const overdue = activePlan.items.filter((item) => !item.done && item.date < today);
+    if (!overdue.length) { setShareStatus("재조정할 지난 미완료 작업이 없어요."); return; }
+    const end = new Date(`${activePlan.examDate}T00:00:00`);
+    const slots = [];
+    for (let cursor = new Date(`${today}T00:00:00`); cursor < end; cursor = addDays(cursor, 1)) {
+      if (days.includes(cursor.getDay())) slots.push({ date: localDateString(cursor), used: activePlan.items.filter((item) => !overdue.includes(item) && item.date === localDateString(cursor)).reduce((sum, item) => sum + Number(item.minutes || 0), 0), limit: Math.min(minutes, Number(dayMinutes[cursor.getDay()] || minutes)) });
+    }
+    const changes = [];
+    const sorted = [...overdue].sort((a, b) => (b.importance === "높음") - (a.importance === "높음") || (a.confidence === "낮음" ? -1 : 1));
+    for (const item of sorted) {
+      const slot = slots.find((entry) => entry.used + Number(item.minutes) <= entry.limit);
+      if (!slot) { const shortage = sorted.slice(changes.length).reduce((sum, entry) => sum + Number(entry.minutes), 0); setShareStatus(`시험 전까지 약 ${shortage}분이 부족해요. 가능 시간을 늘리거나 범위를 줄여주세요.`); return; }
+      changes.push({ id: item.id, from: item.date, to: slot.date, minutes: item.minutes, task: item.task }); slot.used += Number(item.minutes);
+    }
+    setRescheduleProposal(changes);
+  };
+
+  const approveReschedule = () => {
+    if (!rescheduleProposal) return;
+    setPlan((current) => current.map((item) => { const change = rescheduleProposal.find((entry) => entry.id === item.id); if (!change) return item; const date = new Date(`${change.to}T00:00:00`); return { ...item, date: change.to, label: `${date.getMonth() + 1}.${date.getDate()} ${DAY_NAMES[date.getDay()]}`, updatedAt: new Date().toISOString() }; }));
+    setRescheduleProposal(null); setShareStatus("확인한 변경 내용으로 일정을 재조정했어요.");
+  };
+
+  const saveMistake = async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const next = [{ id: crypto.randomUUID(), subject: String(form.get("subject")), unit: String(form.get("unit")), memo: String(form.get("memo")), reason: String(form.get("reason")), reviewDate: String(form.get("reviewDate")), createdAt: new Date().toISOString() }, ...mistakes];
+    setMistakes(next); event.currentTarget.reset();
+    try {
+      const response = await fetch("/api/mistakes", { method: "PUT", headers: { authorization: `Bearer ${sessionTokenRef.current}`, "content-type": "application/json" }, body: JSON.stringify({ mistakes: next }) });
+      const result = await readJsonResponse(response); if (!response.ok) throw new Error(apiMessage(result, "저장하지 못했어요."));
+      setShareStatus("오답을 저장하고 취약 단원 분석에 반영했어요.");
+    } catch (saveError) { setShareStatus(saveError.message); }
+  };
+
+  const exportIcs = (todayOnly = false) => {
+    const selected = plan.filter((item) => !todayOnly || item.date === localDateString(new Date()));
+    const escape = (value) => String(value).replace(/([,;])/g, "\\$1").replace(/\n/g, "\\n");
+    const body = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//공부하자//Study Plan//KO", ...selected.flatMap((item) => ["BEGIN:VEVENT", `UID:${item.id}@gongbuhaja`, `DTSTART;VALUE=DATE:${item.date.replaceAll("-", "")}`, `SUMMARY:${escape(`${item.subject} ${item.unit || "공부"}`)}`, `DESCRIPTION:${escape(`${item.task} (${item.minutes}분)`)}`, "END:VEVENT"]), "END:VCALENDAR"].join("\r\n");
+    const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([body], { type: "text/calendar;charset=utf-8" })); link.download = todayOnly ? "오늘의-공부.ics" : "시험-공부-계획.ics"; link.click(); URL.revokeObjectURL(link.href);
+  };
+
+  const changeLoginCode = async (event) => {
+    event.preventDefault(); const form = new FormData(event.currentTarget); setSettingsMessage("");
+    const response = await fetch("/api/account", { method: "PATCH", headers: { authorization: `Bearer ${sessionTokenRef.current}`, "content-type": "application/json" }, body: JSON.stringify({ currentCode: form.get("currentCode"), newCode: form.get("newCode") }) });
+    const result = await readJsonResponse(response); if (!response.ok) { setSettingsMessage(apiMessage(result, "변경하지 못했어요.")); return; }
+    setSettingsMessage("코드를 변경했습니다. 모든 기기에서 로그아웃됩니다."); setTimeout(logout, 1200);
+  };
+
+  const deleteAccount = async (event) => {
+    event.preventDefault(); const confirmation = String(new FormData(event.currentTarget).get("confirmation") || "");
+    if (!window.confirm("계정과 모든 학습 데이터를 복구할 수 없게 삭제할까요?")) return;
+    const response = await fetch("/api/account", { method: "DELETE", headers: { authorization: `Bearer ${sessionTokenRef.current}`, "content-type": "application/json" }, body: JSON.stringify({ confirmation }) });
+    const result = await readJsonResponse(response); if (!response.ok) { setSettingsMessage(apiMessage(result, "삭제하지 못했어요.")); return; }
+    localStorage.clear(); window.location.reload();
+  };
+
+  const logoutAllDevices = async () => {
+    const response = await fetch("/api/sessions", { method: "DELETE", headers: { authorization: `Bearer ${sessionTokenRef.current}` } });
+    const result = await readJsonResponse(response);
+    if (!response.ok) { setSettingsMessage(apiMessage(result, "세션을 만료하지 못했어요.")); return; }
+    localStorage.removeItem("study-flow-session"); window.location.reload();
+  };
+
   const changeTimer = (value) => {
     setTimerMode(value);
     setTimerSeconds(value * 60);
+    setTimerInitialSeconds(value * 60);
     setTimerRunning(false);
   };
 
   const login = async (event) => {
     event.preventDefault();
-    if (!loginName.trim() || !/^\d{6,8}$/.test(loginPin)) {
-      setLoginError("별명과 숫자 6~8자리 로그인 코드를 확인해주세요.");
+    const cleanedLoginCode = loginPin.trim();
+    if (!loginName.trim() || (!LEGACY_PIN.test(cleanedLoginCode) && !MODERN_PASSWORD.test(cleanedLoginCode))) {
+      setLoginError("비밀번호는 영문자·숫자·특수문자를 포함한 8자 이상으로 입력해주세요. 기존 숫자 코드는 그대로 사용할 수 있어요.");
       return;
     }
     setLoginStatus("loading"); setLoginError("");
     try {
-      const response = await fetch("/api/account", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: loginName.trim(), pin: loginPin, grade, isUnder13: ageGroup === "under13" }) });
+      const requestOptions = { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: loginName.trim(), pin: cleanedLoginCode, grade, isUnder13: ageGroup === "under13" }) };
+      let response = await fetch("/api/account", requestOptions);
+      if (response.status === 405) response = await fetch("/api/account/", requestOptions);
       const result = await readJsonResponse(response);
-      if (!response.ok || !result.ok || !result.token || !result.user) {
-        throw new Error(result.error || "로그인 서버의 응답이 올바르지 않아요. 잠시 후 다시 시도해주세요.");
+      if (!response.ok || !result.ok || !result.user) {
+        const fallbackMessage = response.status === 404
+          ? "로그인 API를 찾을 수 없어요. 서버 배포 설정을 확인해주세요."
+          : response.status >= 500
+            ? "로그인 서버에 일시적인 문제가 있어요. 잠시 후 다시 시도해주세요."
+            : `로그인 서버 응답을 확인할 수 없어요. (상태 ${response.status})`;
+        throw new Error(apiMessage(result, fallbackMessage));
       }
       const legacyId = loginName.trim().toLowerCase().replace(/\s+/g, "-");
       const legacyPlans = localStorage.getItem(`study-flow-plans-${legacyId}`);
       if (legacyPlans && !localStorage.getItem(`study-flow-plans-${result.user.id}`)) {
         localStorage.setItem(`study-flow-plans-${result.user.id}`, legacyPlans);
       }
-      sessionTokenRef.current = result.token;
-      localStorage.setItem("study-flow-session", JSON.stringify(result));
+      sessionTokenRef.current = "";
+      localStorage.setItem("study-flow-session", JSON.stringify({ ok: true, user: result.user, account: result.account }));
       localStorage.removeItem("study-flow-user");
       setPlans([]); setUser(result.user); setLoginPin("");
       window.dispatchEvent(new Event("study-session-changed"));
@@ -1051,12 +1210,12 @@ export default function Home() {
           <form className="auth-card" onSubmit={login}>
             <div className="card-heading"><span>무료 플래너 시작하기</span><span className="step">SYNC</span></div>
             <label><span>이름 또는 별명</span><input value={loginName} onChange={(event) => setLoginName(event.target.value)} placeholder="예: 확률마스터" autoFocus /></label>
-            <label><span>로그인 코드</span><input type="password" inputMode="numeric" minLength="6" maxLength="8" value={loginPin} onChange={(event) => setLoginPin(event.target.value.replace(/\D/g, ""))} placeholder="숫자 6~8자리" autoComplete="current-password" /></label>
+            <label><span>비밀번호</span><input type="password" minLength="6" maxLength="64" value={loginPin} onChange={(event) => setLoginPin(event.target.value)} placeholder="영문자·숫자·특수문자 포함 8자 이상" autoComplete="current-password" /></label>
             <label><span>현재 학년</span><select value={grade} onChange={(event) => setGrade(event.target.value)}>{["초4","초5","초6","중1","중2","중3","고1","고2","고3"].map((item) => <option key={item}>{item}</option>)}</select></label>
             <label><span>연령 구분</span><select value={ageGroup} onChange={(event) => setAgeGroup(event.target.value)}><option value="under13">13세 미만</option><option value="over13">13세 이상</option></select></label>
             <button className="primary-button" type="submit" disabled={loginStatus === "loading"}>{loginStatus === "loading" ? "확인하는 중..." : "내 공부방 들어가기"} <span>→</span></button>
             {loginError && <p className="form-status error" role="alert">{loginError}</p>}
-            <p className="privacy">처음 입력하면 계정이 만들어집니다. 다른 기기에서도 같은 별명·코드를 입력하세요. 코드는 복구할 수 없으니 보호자와 안전하게 보관하세요.</p>
+            <p className="privacy">처음 입력하면 계정이 만들어집니다. 새 비밀번호는 영문자·숫자·특수문자를 모두 포함해 8자 이상으로 만드세요. 기존 숫자 로그인 코드는 그대로 사용할 수 있습니다.</p>
           </form>
         </section>
 
@@ -1121,19 +1280,43 @@ export default function Home() {
         <div className="nav-right">
           <button className="user-badge" onClick={logout}>{user.grade} · {user.name} <small>로그아웃</small></button>
           <span className={`sync-status ${syncStatus}`}>{syncStatus === "idle" ? "불러오는 중" : syncStatus === "syncing" ? "동기화 중" : syncStatus === "offline" ? "기기 저장됨" : "서버 저장됨"}</span>
+          <button className="nav-link" onClick={() => setView("today")}>오늘의 공부</button>
+          <button className="nav-link info-nav" onClick={() => setView("mistakes")}>오답 관리</button>
+          <a className="nav-link info-nav" href="/guides">학습 가이드</a>
+          <a className="nav-link info-nav" href="/about">서비스 소개</a>
           <button className="nav-link community-nav" onClick={() => setView("community")}>계획 둘러보기</button>
           <button className="nav-link" onClick={() => setView("music")}>노래</button>
           <button className="nav-link contact-nav" onClick={() => setView("contact")}>제휴 문의</button>
           <button className="nav-link" onClick={() => setView("library")}>
             계획 보관함 <b>{plans.length}</b>
           </button>
+          <button className="nav-link info-nav" onClick={() => setView("settings")}>계정 설정</button>
           <button className="ghost-button" onClick={() => setView("form")}>+ 새 계획</button>
         </div>
       </nav>
 
       {shareStatus && <div className="action-toast" role="status" aria-live="polite">✓ {shareStatus}</div>}
 
-      {view === "contact" ? contactPage : view === "edit" && editingPlan ? (
+      {view === "contact" ? contactPage : view === "today" ? (
+        <section className="today-shell">
+          <header className="library-header"><div><p className="eyebrow">TODAY&apos;S STUDY</p><h1>오늘의 공부</h1><p>{localDateString(new Date())} · 완료 상태는 서버에 바로 동기화됩니다.</p></div><button className="ghost-button" onClick={proposeReschedule}>미완료 작업 재조정</button></header>
+          {(() => { const today = localDateString(new Date()); const tasks = plan.filter((item) => item.date === today); const total = tasks.reduce((sum, item) => sum + Number(item.minutes || 0), 0); const completed = tasks.filter((item) => item.done).reduce((sum, item) => sum + Number(item.actualMinutes || item.minutes || 0), 0); const percent = tasks.length ? Math.round(tasks.filter((item) => item.done).length / tasks.length * 100) : 0; return <>
+            <div className="today-summary"><article><span>예상 총 시간</span><strong>{total}분</strong></article><article><span>완료 / 남은 시간</span><strong>{completed}분 / {Math.max(0, total - completed)}분</strong></article><article><span>오늘 진행률</span><strong>{percent}%</strong></article><article><span>작업 타이머</span><strong>{formatTimer(timerSeconds)}</strong><button className="ghost-button" onClick={() => timerSeconds > 0 && setTimerRunning((running) => !running)}>{timerRunning ? "중지" : "시작"}</button></article></div>
+            <div className="plan-list">{tasks.length ? tasks.map((item, index) => <article className={`plan-item ${item.done ? "done" : ""}`} key={item.id}><button className="check" onClick={() => setPlan((current) => current.map((entry) => entry.id === item.id ? { ...entry, done: !entry.done, actualMinutes: !entry.done ? Math.max(1, activeTaskId === item.id ? Math.ceil((timerInitialSeconds - timerSeconds) / 60) : entry.actualMinutes || entry.minutes) : 0 } : entry))}>{item.done ? "✓" : index + 1}</button><div className="date">{item.subject}<small>{item.studyType || "학습"}</small></div><div className="task"><strong>{item.task}</strong><span>{item.targetAmount || item.unit} · {item.minutes}분{item.actualMinutes ? ` · 실제 ${item.actualMinutes}분` : ""}</span>{item.reviewDate && <small>다음 복습 {item.reviewDate}</small>}</div><button className="ghost-button" onClick={() => { changeTimer(item.minutes); setActiveTaskId(item.id); }}>{activeTaskId === item.id ? "선택됨" : "타이머"}</button></article>) : <div className="empty-library"><h2>오늘 배정된 작업이 없어요.</h2><p>새 계획을 만들거나 다음 일정을 확인해보세요.</p></div>}</div>
+          </>; })()}
+          {rescheduleProposal && <div className="proposal-card"><h2>재조정 변경 내용</h2>{rescheduleProposal.map((change) => <p key={change.id}><strong>{change.task}</strong><span>{change.from} → {change.to} · {change.minutes}분</span></p>)}<div><button className="ghost-button" onClick={() => setRescheduleProposal(null)}>취소</button><button className="primary-button compact" onClick={approveReschedule}>변경 승인</button></div></div>}
+        </section>
+      ) : view === "mistakes" ? (
+        <section className="today-shell"><header className="library-header"><div><p className="eyebrow">MISTAKES · WEAK UNITS</p><h1>오답과 취약 단원</h1><p>같은 과목·단원에 오답이 2개 이상이면 취약 단원으로 계획에 우선 반영하세요.</p></div></header>
+          <form className="planner-card mistake-form" onSubmit={saveMistake}><label><span>과목</span><input name="subject" required /></label><label><span>단원</span><input name="unit" required /></label><label><span>문제 메모</span><textarea name="memo" rows="3" required /></label><label><span>틀린 이유</span><select name="reason">{["개념 부족","암기 부족","계산 실수","문제 해석 오류","시간 부족","기타"].map((reason) => <option key={reason}>{reason}</option>)}</select></label><label><span>다시 볼 날짜</span><input type="date" name="reviewDate" required /></label><button className="primary-button" type="submit">오답 저장</button></form>
+          <div className="mistake-list">{mistakes.map((item) => { const repeated = mistakes.filter((entry) => entry.subject === item.subject && entry.unit === item.unit).length >= 2; return <article key={item.id}><span>{item.reason}</span><h2>{item.subject} · {item.unit} {repeated && <b>취약 단원</b>}</h2><p>{item.memo}</p><small>다시 보기 {item.reviewDate}</small></article>; })}</div>
+        </section>
+      ) : view === "settings" ? (
+        <section className="today-shell"><header className="library-header"><div><p className="eyebrow">ACCOUNT SETTINGS</p><h1>계정 설정</h1><p>서버 저장 정보: 별명 {user.name}, 학년 {user.grade}, 연령 분류 {user.isChild ? "아동" : "일반"}</p></div></header>
+          <div className="settings-grid"><form className="planner-card" onSubmit={changeLoginCode}><h2>로그인 코드 변경</h2><label><span>현재 코드</span><input type="password" name="currentCode" required /></label><label><span>새 코드</span><input type="password" name="newCode" minLength="8" placeholder="영문·숫자·특수문자 포함" required /></label><button className="primary-button" type="submit">변경 후 모든 기기 로그아웃</button></form><form className="planner-card danger-card" onSubmit={deleteAccount}><h2>계정 및 데이터 삭제</h2><p>계정, 계획, 완료 기록, 오답과 모든 세션을 삭제합니다. 복구할 수 없습니다.</p><label><span>확인을 위해 별명 “{user.name}” 입력</span><input name="confirmation" required /></label><button className="primary-button" type="submit">계정 영구 삭제</button></form></div>
+          {settingsMessage && <p className="form-status" role="status">{settingsMessage}</p>}<button className="ghost-button" onClick={logout}>현재 기기 로그아웃</button> <button className="ghost-button" onClick={logoutAllDevices}>모든 기기에서 로그아웃</button>
+        </section>
+      ) : view === "edit" && editingPlan ? (
         <section className="edit-shell">
           <header className="edit-header">
             <div>
@@ -1214,6 +1397,18 @@ export default function Home() {
               <small>쉼표나 줄바꿈으로 단원을 나누면 더 구체적으로 배분해요.</small>
             </label>
 
+            <label>
+              <span>단원별 분량</span>
+              <textarea value={unitDetails} onChange={(e) => setUnitDetails(e.target.value)} placeholder={"예: 3단원 개념 12쪽·예제 8문제\n4단원 개념 18쪽·기출 15문제"} rows="3" />
+              <small>한 줄에 한 단원씩, 페이지나 문제 수를 함께 적어주세요.</small>
+            </label>
+
+            <div className="priority-grid">
+              <label><span>난이도</span><select value={difficulty} onChange={(e) => setDifficulty(e.target.value)}>{["낮음","보통","높음"].map((value) => <option key={value}>{value}</option>)}</select></label>
+              <label><span>현재 자신감</span><select value={confidence} onChange={(e) => setConfidence(e.target.value)}>{["낮음","보통","높음"].map((value) => <option key={value}>{value}</option>)}</select></label>
+              <label><span>시험 중요도</span><select value={importance} onChange={(e) => setImportance(e.target.value)}>{["낮음","보통","높음"].map((value) => <option key={value}>{value}</option>)}</select></label>
+            </div>
+
             <div className="field">
               <span className="label-title">공부 가능한 요일</span>
               <div className="day-picker">
@@ -1225,10 +1420,18 @@ export default function Home() {
               </div>
             </div>
 
+            <div className="weekday-minutes">
+              {days.sort((a, b) => a - b).map((day) => (
+                <label key={day}><span>{DAY_NAMES[day]}요일 가능 시간</span><input type="number" min="10" max={minutes} step="10" value={dayMinutes[day] || minutes} onChange={(e) => setDayMinutes((current) => ({ ...current, [day]: Math.min(minutes, Number(e.target.value)) }))} /></label>
+              ))}
+            </div>
+
             <label>
               <span className="slider-label"><b>하루 공부 시간</b><strong>{minutes}분</strong></span>
               <input className="range-input" type="range" min="20" max="180" step="10" value={minutes} onChange={(e) => setMinutes(Number(e.target.value))} />
             </label>
+
+            <label className="consent-field"><input type="checkbox" checked={autoMode} onChange={(e) => setAutoMode(e.target.checked)} /><span>시험까지 남은 기간에 따른 자동 집중 모드 사용</span></label>
 
             {error && <p className="error">{error}</p>}
             <button className="primary-button" type="submit">
@@ -1427,6 +1630,8 @@ export default function Home() {
               <p>{plan.length}번의 공부로 시험 준비를 끝내요.</p>
             </div>
             <div className="result-actions">
+              <button className="ghost-button" onClick={() => window.print()}>인쇄 · PDF</button>
+              <button className="ghost-button" onClick={() => exportIcs(false)}>캘린더 ICS</button>
               {!isCommunityImportedPlan && (
                 <button className={`ghost-button ${hasSharedActivePlan ? "shared" : ""}`} onClick={shareCurrentPlan} disabled={hasSharedActivePlan}>
                   {hasSharedActivePlan ? "✓ 커뮤니티 게시 완료" : "커뮤니티에 공유"}
@@ -1529,6 +1734,7 @@ export default function Home() {
                 <div className="task">
                   <strong>{item.task}</strong>
                   <span>{item.minutes}분 · 집중 학습</span>
+                  {item.guideTip && <small>가이드 적용 · {item.guideTip}</small>}
                 </div>
                 <span className="status">{item.done ? "완료" : "예정"}</span>
               </article>

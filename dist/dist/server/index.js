@@ -19,6 +19,91 @@ function collectSources(response) {
   return sources.slice(0, 5);
 }
 
+const encoder = new TextEncoder();
+const bytesToHex = (bytes) => Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
+
+async function sha256(value) {
+  return bytesToHex(await crypto.subtle.digest("SHA-256", encoder.encode(value)));
+}
+
+async function hashPin(pin, salt) {
+  const key = await crypto.subtle.importKey("raw", encoder.encode(pin), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: encoder.encode(salt), iterations: 100000 }, key, 256);
+  return bytesToHex(bits);
+}
+
+function dataStore(env) {
+  return env?.STUDY_DATA || env?.STUDY_PLANS;
+}
+
+function normalizeName(value) {
+  return value.normalize("NFKC").trim().toLocaleLowerCase("ko-KR").replace(/\s+/g, " ");
+}
+
+async function account(request, env) {
+  const store = dataStore(env);
+  if (!store) return json({ ok: false, error: "계정 저장소가 아직 연결되지 않았어요. 관리자에게 STUDY_DATA 설정을 요청해주세요." }, 503);
+  let body;
+  try { body = await request.json(); } catch { return json({ ok: false, error: "로그인 형식이 올바르지 않아요." }, 400); }
+  const name = String(body.name || "").trim().slice(0, 30);
+  const normalized = normalizeName(name);
+  const pin = String(body.pin || "");
+  const grade = String(body.grade || "").trim();
+  if (name.length < 2 || pin.length < 6 || pin.length > 64 || /\s/.test(pin)) return json({ ok: false, error: "별명은 2자 이상, 비밀번호는 공백 없이 6~64자로 입력해주세요." }, 400);
+  if (!/^(초[4-6]|중[1-3]|고[1-3])$/.test(grade)) return json({ ok: false, error: "학년을 확인해주세요." }, 400);
+
+  const accountKey = `account:${await sha256(normalized)}`;
+  let saved = await store.get(accountKey, "json");
+  if (!saved) {
+    if (!/^(?=.*[A-Za-z])(?=.*\d)(?=.*[^A-Za-z\d\s])\S{8,64}$/.test(pin)) {
+      return json({ ok: false, error: "새 비밀번호는 영문자·숫자·특수문자를 모두 포함해 8자 이상으로 만들어주세요." }, 400);
+    }
+    const salt = crypto.randomUUID();
+    saved = { id: crypto.randomUUID(), name, grade, isChild: grade.startsWith("초") || body.isUnder13 === true, salt, iterations: 100000, pinHash: await hashPin(pin, salt), createdAt: new Date().toISOString() };
+    await store.put(accountKey, JSON.stringify(saved));
+  } else if ((await hashPin(pin, saved.salt)) !== saved.pinHash) {
+    return json({ ok: false, error: "이미 사용 중인 별명이거나 로그인 코드가 다릅니다." }, 401);
+  }
+
+  const token = crypto.randomUUID() + crypto.randomUUID().replaceAll("-", "");
+  await store.put(`session:${await sha256(token)}`, saved.id, { expirationTtl: 2_592_000 });
+  return json({ ok: true, token, user: { id: saved.id, name: saved.name, grade: saved.grade, isChild: saved.isChild }, account: { nickname: saved.name, grade: saved.grade, ageGroup: saved.isChild ? "under13" : "over13" } });
+}
+
+async function sessionUserId(request, store) {
+  const authorization = request.headers.get("authorization") || "";
+  const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+  if (!token) return null;
+  return store.get(`session:${await sha256(token)}`);
+}
+
+async function logout(request, env) {
+  const store = dataStore(env);
+  if (!store) return json({ ok: false, error: "계정 저장소가 연결되지 않았습니다." }, 503);
+  const authorization = request.headers.get("authorization") || "";
+  const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+  if (!token) return json({ ok: false, error: "인증 정보가 없습니다." }, 401);
+  await store.delete(`session:${await sha256(token)}`);
+  return json({ ok: true });
+}
+
+async function syncPlans(request, env) {
+  const store = dataStore(env);
+  if (!store) return json({ error: "계정 저장소가 연결되지 않았어요." }, 503);
+  const userId = await sessionUserId(request, store);
+  if (!userId) return json({ error: "로그인이 만료되었습니다. 다시 로그인해주세요." }, 401);
+  const key = `plans:${userId}`;
+  if (request.method === "GET") return json({ plans: (await store.get(key, "json")) || [] });
+  if (request.method !== "PUT") return json({ error: "GET 또는 PUT 요청만 지원해요." }, 405);
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "계획 형식이 올바르지 않아요." }, 400); }
+  if (!Array.isArray(body.plans) || body.plans.length > 100) return json({ error: "저장할 계획 목록을 확인해주세요." }, 400);
+  const serialized = JSON.stringify(body.plans);
+  if (serialized.length > 1_500_000) return json({ error: "계획 저장 용량을 초과했어요." }, 413);
+  await store.put(key, serialized);
+  return json({ ok: true, savedAt: new Date().toISOString() });
+}
+
 async function answerQuestion(request, env) {
   if (!env?.OPENAI_API_KEY) {
     return json(
@@ -99,7 +184,8 @@ async function answerQuestion(request, env) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname === "/ads.txt") {
+    const pathname = url.pathname === "/" ? "/" : url.pathname.replace(/\/+$/, "");
+    if (pathname === "/ads.txt") {
       return new Response(
         "google.com, pub-3450079984401603, DIRECT, f08c47fec0942fa0\n",
         {
@@ -110,9 +196,28 @@ export default {
         }
       );
     }
-    if (url.pathname === "/api/coach") {
+    if (pathname === "/api/coach") {
       if (request.method !== "POST") return json({ error: "POST 요청만 지원해요." }, 405);
       return answerQuestion(request, env);
+    }
+    if (pathname === "/api/account") {
+      if (request.method !== "POST") return json({ ok: false, error: "POST 요청만 지원합니다." }, 405);
+      try {
+        return await account(request, env);
+      } catch (error) {
+        console.error("Account API error", error instanceof Error ? error.message : "unknown");
+        return json({ ok: false, error: "계정 처리 중 오류가 발생했습니다." }, 500);
+      }
+    }
+    if (pathname === "/api/sync") return syncPlans(request, env);
+    if (pathname === "/api/logout") {
+      if (request.method !== "POST") return json({ ok: false, error: "POST 요청만 지원합니다." }, 405);
+      try {
+        return await logout(request, env);
+      } catch (error) {
+        console.error("Logout API error", error instanceof Error ? error.message : "unknown");
+        return json({ ok: false, error: "로그아웃 처리 중 오류가 발생했습니다." }, 500);
+      }
     }
     if (env?.ASSETS?.fetch) {
       const assetUrl = new URL(url);

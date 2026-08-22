@@ -35,13 +35,20 @@ export function normalizeName(value) {
 
 export async function createSession(store, userId) {
   const token = crypto.randomUUID() + crypto.randomUUID().replaceAll("-", "");
-  await store.put(`session:${await sha256(token)}`, userId, { expirationTtl: SESSION_TTL_SECONDS });
+  const sessionKey = `session:${await sha256(token)}`;
+  await store.put(sessionKey, userId, { expirationTtl: SESSION_TTL_SECONDS });
+  const indexKey = `sessions:${userId}`;
+  const sessions = (await store.get(indexKey, "json")) || [];
+  const next = [...new Set([...sessions, sessionKey])].slice(-50);
+  await store.put(indexKey, JSON.stringify(next), { expirationTtl: SESSION_TTL_SECONDS });
   return token;
 }
 
 export function getBearerToken(request) {
   const authorization = request.headers.get("authorization") || "";
-  return authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+  if (authorization.startsWith("Bearer ") && authorization.slice(7)) return authorization.slice(7);
+  const cookie = request.headers.get("cookie") || "";
+  return cookie.split(";").map((item) => item.trim()).find((item) => item.startsWith("study_session="))?.slice(14) || "";
 }
 
 export async function getSessionUserId(request, store) {
@@ -55,6 +62,27 @@ export async function deleteSession(request, store) {
   if (!token) return false;
   await store.delete(`session:${await sha256(token)}`);
   return true;
+}
+
+export async function deleteAllSessions(store, userId) {
+  const indexKey = `sessions:${userId}`;
+  const sessions = new Set((await store.get(indexKey, "json")) || []);
+  // 이전 버전은 사용자별 세션 인덱스가 없었으므로, 코드 변경·계정 삭제 시
+  // 기존 세션도 빠짐없이 만료하도록 session: 접두 키를 안전하게 조회한다.
+  if (typeof store.list === "function") {
+    let cursor;
+    do {
+      const page = await store.list({ prefix: "session:", cursor });
+      for (const entry of page.keys || []) if ((await store.get(entry.name)) === userId) sessions.add(entry.name);
+      cursor = page.list_complete === false ? page.cursor : undefined;
+    } while (cursor);
+  }
+  await Promise.all([...sessions].map((key) => store.delete(key)));
+  await store.delete(indexKey);
+}
+
+export function sessionCookie(token, maxAge = SESSION_TTL_SECONDS) {
+  return `study_session=${token}; Path=/; Max-Age=${maxAge}; HttpOnly; Secure; SameSite=Lax`;
 }
 
 export const passwordPolicy = {

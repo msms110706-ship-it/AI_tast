@@ -57,12 +57,15 @@ async function account(request, env) {
   const normalized = normalizeName(name);
   const pin = String(body.pin || "");
   const grade = String(body.grade || "").trim();
-  if (name.length < 2 || !/^\\d{6,8}$/.test(pin)) return json({ ok: false, error: "별명은 2자 이상, 로그인 코드는 숫자 6~8자리로 입력해주세요." }, 400);
+  if (name.length < 2 || pin.length < 6 || pin.length > 64 || /\\s/.test(pin)) return json({ ok: false, error: "별명은 2자 이상, 비밀번호는 공백 없이 6~64자로 입력해주세요." }, 400);
   if (!/^(초[4-6]|중[1-3]|고[1-3])$/.test(grade)) return json({ ok: false, error: "학년을 확인해주세요." }, 400);
 
   const accountKey = \`account:\${await sha256(normalized)}\`;
   let saved = await store.get(accountKey, "json");
   if (!saved) {
+    if (!/^(?=.*[A-Za-z])(?=.*\\d)(?=.*[^A-Za-z\\d\\s])\\S{8,64}$/.test(pin)) {
+      return json({ ok: false, error: "새 비밀번호는 영문자·숫자·특수문자를 모두 포함해 8자 이상으로 만들어주세요." }, 400);
+    }
     const salt = crypto.randomUUID();
     saved = { id: crypto.randomUUID(), name, grade, isChild: grade.startsWith("초") || body.isUnder13 === true, salt, iterations: 100000, pinHash: await hashPin(pin, salt), createdAt: new Date().toISOString() };
     await store.put(accountKey, JSON.stringify(saved));
@@ -189,7 +192,8 @@ async function answerQuestion(request, env) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname === "/ads.txt") {
+    const pathname = url.pathname === "/" ? "/" : url.pathname.replace(/\\/+$/, "");
+    if (pathname === "/ads.txt") {
       return new Response(
         "google.com, pub-3450079984401603, DIRECT, f08c47fec0942fa0\\n",
         {
@@ -200,11 +204,11 @@ export default {
         }
       );
     }
-    if (url.pathname === "/api/coach") {
+    if (pathname === "/api/coach") {
       if (request.method !== "POST") return json({ error: "POST 요청만 지원해요." }, 405);
       return answerQuestion(request, env);
     }
-    if (url.pathname === "/api/account") {
+    if (pathname === "/api/account") {
       if (request.method !== "POST") return json({ ok: false, error: "POST 요청만 지원합니다." }, 405);
       try {
         return await account(request, env);
@@ -213,8 +217,8 @@ export default {
         return json({ ok: false, error: "계정 처리 중 오류가 발생했습니다." }, 500);
       }
     }
-    if (url.pathname === "/api/sync") return syncPlans(request, env);
-    if (url.pathname === "/api/logout") {
+    if (pathname === "/api/sync") return syncPlans(request, env);
+    if (pathname === "/api/logout") {
       if (request.method !== "POST") return json({ ok: false, error: "POST 요청만 지원합니다." }, 405);
       try {
         return await logout(request, env);
