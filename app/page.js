@@ -858,7 +858,7 @@ export default function Home() {
             ? "로그인 서버에 일시적인 문제가 있어요. 잠시 후 다시 시도해주세요."
             : `로그인 서버 응답을 확인할 수 없어요. (상태 ${response.status})`;
         const message = response.status === 401
-          ? "별명 또는 비밀번호가 일치하지 않아요. 기존 계정은 처음 만들 때 사용한 숫자 코드를 그대로 입력해주세요."
+          ? "현재 비밀번호가 일치하지 않아요. 기존 숫자 코드 계정은 처음 만든 코드를 그대로 입력해주세요."
           : apiMessage(result, fallbackMessage);
         throw new Error(message);
       }
@@ -1220,7 +1220,7 @@ export default function Home() {
             <label><span>연령 구분</span><select value={ageGroup} onChange={(event) => setAgeGroup(event.target.value)}><option value="under13">13세 미만</option><option value="over13">13세 이상</option></select></label>
             <button className="primary-button" type="submit" disabled={loginStatus === "loading"}>{loginStatus === "loading" ? "확인하는 중..." : "내 공부방 들어가기"} <span>→</span></button>
             {loginError && <p className="form-status error" role="alert">{loginError}</p>}
-            <p className="privacy">새 별명을 처음 입력하면 계정이 만들어집니다. 이미 사용한 별명이라면 처음 만들 때 정한 비밀번호가 필요합니다. 새 비밀번호는 영문자·숫자·특수문자를 모두 포함해 8자 이상으로 만드세요. 기존 숫자 로그인 코드는 그대로 사용할 수 있습니다.</p>
+            <p className="privacy">별명과 비밀번호가 모두 같을 때만 기존 계정으로 로그인합니다. 둘 중 하나라도 다르면 별도 계정이 만들어집니다. 새 비밀번호는 영문자·숫자·특수문자를 모두 포함해 8자 이상이어야 하며, 기존 숫자 로그인 코드는 기존 계정에서 그대로 사용할 수 있습니다.</p>
           </form>
         </section>
 
