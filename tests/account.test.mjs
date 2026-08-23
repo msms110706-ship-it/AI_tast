@@ -131,11 +131,21 @@ test("unauthenticated API is JSON 401 and security headers cover API responses",
   const store = new MockKV();
   const unauthorized = await syncRoute.onRequest({ request: new Request("https://example.test/api/sync"), env: { STUDY_DATA: store } });
   assert.equal(unauthorized.status, 401); assert.match(unauthorized.headers.get("content-type"), /application\/json/);
-  const secured = await middleware.onRequest({ next: async () => unauthorized });
+  const secured = await middleware.onRequest({ request: new Request("https://example.test/api/sync"), next: async () => unauthorized });
   assert.equal(secured.headers.get("x-content-type-options"), "nosniff");
   assert.equal(secured.headers.get("x-frame-options"), "DENY");
   assert.match(secured.headers.get("content-security-policy"), /frame-ancestors 'none'/);
   assert.equal(store.writes.length, 0);
+});
+
+test("HTML middleware never applies the API-only enforced CSP", async () => {
+  const html = new Response("<!doctype html><div id=app></div>", { headers: { "content-type": "text/html", "content-security-policy": "default-src 'none'" } });
+  const secured = await middleware.onRequest({ request: new Request("https://example.test/"), next: async () => html });
+  assert.equal(secured.headers.has("content-security-policy"), false);
+  assert.equal(secured.headers.get("x-frame-options"), "DENY");
+  const headersFile = await readFile(new URL("../public/_headers", import.meta.url), "utf8");
+  assert.match(headersFile, /Content-Security-Policy-Report-Only:/);
+  assert.doesNotMatch(headersFile, /^\s*Content-Security-Policy:/m);
 });
 
 test("local-only UI blocks account and external services and provides JSON backup", async () => {
