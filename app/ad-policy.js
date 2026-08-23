@@ -13,12 +13,13 @@ export default function AdPolicy() {
       let session = null;
       try { session = JSON.parse(localStorage.getItem("study-flow-session") || "null"); } catch {}
 
-      // 연령을 확인하지 못한 방문자와 초등학생 계정에는 광고 코드를 전혀
-      // 로드하지 않는다. 중·고등학생 계정도 행동 기반 맞춤 광고는 요청하지 않는다.
-      if (!session?.user || session.user.isChild) return;
+      // 연령 미확인 및 만 14세 미만 로컬 모드는 스크립트 자체를 로드하지 않는다.
+      if (!session?.user || session.user.localOnly || session.user.isChild) return;
 
       window.adsbygoogle = window.adsbygoogle || [];
       window.adsbygoogle.requestNonPersonalizedAds = 1;
+      // Google의 통합 TFAT 값 2(TEEN)를 스크립트 요청 전에 설정한다.
+      window.google_tag_for_age_treatment = 2;
       const script = document.createElement("script");
       script.async = true;
       script.crossOrigin = "anonymous";

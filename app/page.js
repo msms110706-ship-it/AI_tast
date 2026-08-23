@@ -430,11 +430,14 @@ export default function Home() {
   const [user, setUser] = useState(null);
   const [authMode, setAuthMode] = useState("login");
   const [loginName, setLoginName] = useState("");
+  const [displayName, setDisplayName] = useState("");
   const [loginPin, setLoginPin] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
+  const [recoveryAcknowledged, setRecoveryAcknowledged] = useState(false);
   const [showLoginPin, setShowLoginPin] = useState(false);
   const [showCurrentCode, setShowCurrentCode] = useState(false);
   const [showNewCode, setShowNewCode] = useState(false);
+  const [showDeletePassword, setShowDeletePassword] = useState(false);
   const [loginStatus, setLoginStatus] = useState("idle");
   const [loginError, setLoginError] = useState("");
   const [syncStatus, setSyncStatus] = useState("idle");
@@ -443,7 +446,8 @@ export default function Home() {
   const syncTimerRef = useRef(null);
   const serverRevisionRef = useRef(0);
   const [grade, setGrade] = useState("중2");
-  const [ageGroup, setAgeGroup] = useState("under13");
+  const [ageGroup, setAgeGroup] = useState("under14");
+  const [localModeAcknowledged, setLocalModeAcknowledged] = useState(false);
   const [subject, setSubject] = useState("한국사");
   const [examDate, setExamDate] = useState(defaultExam);
   const [range, setRange] = useState("조선 전기부터 근대 사회까지");
@@ -486,7 +490,9 @@ export default function Home() {
     let cancelled = false;
     try {
       const session = JSON.parse(localStorage.getItem("study-flow-session") || "null");
-      if (session?.user) {
+      if (session?.user?.localOnly) {
+        setUser(session.user);
+      } else if (session?.user) {
         sessionTokenRef.current = session.token || "";
         const headers = session.token ? { authorization: `Bearer ${session.token}` } : {};
         fetch("/api/account/me", { headers }).then(async (response) => {
@@ -547,6 +553,11 @@ export default function Home() {
         } catch {}
       }
     }
+    if (user.localOnly) {
+      plansHydratedRef.current = true;
+      setSyncStatus("local");
+      return;
+    }
     const loadServerPlans = async () => {
       setSyncStatus("syncing");
       try {
@@ -578,7 +589,7 @@ export default function Home() {
     const key = `study-flow-plans-${user.id}`;
     if (plans.length) localStorage.setItem(key, JSON.stringify(plans));
     else localStorage.removeItem(key);
-    if (!plansHydratedRef.current) return;
+    if (!plansHydratedRef.current || user.localOnly) return;
     clearTimeout(syncTimerRef.current);
     setSyncStatus("syncing");
     syncTimerRef.current = setTimeout(async () => {
@@ -624,6 +635,10 @@ export default function Home() {
 
   useEffect(() => {
     if (!user) return;
+    if (user.localOnly) {
+      try { setMistakes(JSON.parse(localStorage.getItem("study-flow-local-mistakes") || "[]")); } catch { setMistakes([]); }
+      return;
+    }
     fetch("/api/mistakes", { headers: { authorization: `Bearer ${sessionTokenRef.current}` } }).then(async (response) => {
       const result = await readJsonResponse(response);
       if (response.ok && Array.isArray(result.mistakes)) setMistakes(result.mistakes);
@@ -810,6 +825,11 @@ export default function Home() {
     const form = new FormData(event.currentTarget);
     const next = [{ id: crypto.randomUUID(), subject: String(form.get("subject")), unit: String(form.get("unit")), memo: String(form.get("memo")), reason: String(form.get("reason")), reviewDate: String(form.get("reviewDate")), createdAt: new Date().toISOString() }, ...mistakes];
     setMistakes(next); event.currentTarget.reset();
+    if (user?.localOnly) {
+      localStorage.setItem("study-flow-local-mistakes", JSON.stringify(next));
+      setShareStatus("오답을 이 브라우저에 저장했어요.");
+      return;
+    }
     try {
       const response = await fetch("/api/mistakes", { method: "PUT", headers: { authorization: `Bearer ${sessionTokenRef.current}`, "content-type": "application/json" }, body: JSON.stringify({ mistakes: next }) });
       const result = await readJsonResponse(response); if (!response.ok) throw new Error(apiMessage(result, "저장하지 못했어요."));
@@ -828,15 +848,27 @@ export default function Home() {
     event.preventDefault(); const form = new FormData(event.currentTarget); setSettingsMessage("");
     const response = await fetch("/api/account", { method: "PATCH", headers: { authorization: `Bearer ${sessionTokenRef.current}`, "content-type": "application/json" }, body: JSON.stringify({ currentCode: form.get("currentCode"), newCode: form.get("newCode") }) });
     const result = await readJsonResponse(response); if (!response.ok) { setSettingsMessage(apiMessage(result, "변경하지 못했어요.")); return; }
-    setSettingsMessage("코드를 변경했습니다. 모든 기기에서 로그아웃됩니다."); setTimeout(logout, 1200);
+    setSettingsMessage("비밀번호를 변경했습니다. 모든 기기에서 로그아웃됩니다."); setTimeout(logout, 1200);
+  };
+
+  const changeDisplayName = async (event) => {
+    event.preventDefault(); const form = new FormData(event.currentTarget); const nextName = String(form.get("displayName") || "").trim();
+    const response = await fetch("/api/account", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ displayName: nextName }) });
+    const result = await readJsonResponse(response); if (!response.ok) { setSettingsMessage(apiMessage(result, "공개 별명을 변경하지 못했어요.")); return; }
+    const nextUser = { ...user, displayName: nextName }; setUser(nextUser); localStorage.setItem("study-flow-session", JSON.stringify({ ok: true, user: nextUser, account: result.account })); setSettingsMessage("공개 별명을 변경했어요.");
   };
 
   const deleteAccount = async (event) => {
-    event.preventDefault(); const confirmation = String(new FormData(event.currentTarget).get("confirmation") || "");
+    event.preventDefault(); const form = new FormData(event.currentTarget); const confirmation = String(form.get("confirmation") || "");
     if (!window.confirm("계정과 모든 학습 데이터를 복구할 수 없게 삭제할까요?")) return;
-    const response = await fetch("/api/account", { method: "DELETE", headers: { authorization: `Bearer ${sessionTokenRef.current}`, "content-type": "application/json" }, body: JSON.stringify({ confirmation }) });
+    const response = await fetch("/api/account", { method: "DELETE", headers: { authorization: `Bearer ${sessionTokenRef.current}`, "content-type": "application/json" }, body: JSON.stringify({ currentPassword: form.get("currentPassword"), confirmation }) });
     const result = await readJsonResponse(response); if (!response.ok) { setSettingsMessage(apiMessage(result, "삭제하지 못했어요.")); return; }
-    localStorage.clear(); window.location.reload();
+    localStorage.removeItem(`study-flow-plans-${user.id}`);
+    localStorage.removeItem(`study-flow-playlists-${user.id}`);
+    localStorage.removeItem("study-flow-session");
+    localStorage.removeItem("study-flow-user");
+    sessionTokenRef.current = "";
+    window.location.assign("/");
   };
 
   const logoutAllDevices = async () => {
@@ -862,17 +894,19 @@ export default function Home() {
     }
     setLoginStatus("loading"); setLoginError("");
     try {
-      const requestOptions = { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: loginName.trim(), password: cleanedLoginCode }) };
+      const requestOptions = { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ loginId: loginName.trim(), password: cleanedLoginCode }) };
       const response = await fetch("/api/account/login", requestOptions);
       const result = await readJsonResponse(response);
       if (!response.ok || !result.ok || !result.user) {
         const fallbackMessage = response.status === 404
           ? "로그인 API를 찾을 수 없어요. 서버 배포 설정을 확인해주세요."
+          : response.status === 429
+            ? "로그인 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요."
           : response.status >= 500
             ? "로그인 서버에 일시적인 문제가 있어요. 잠시 후 다시 시도해주세요."
             : `로그인 서버 응답을 확인할 수 없어요. (상태 ${response.status})`;
         const message = response.status === 401
-          ? "별명 또는 비밀번호가 올바르지 않습니다."
+          ? "로그인 아이디 또는 비밀번호가 올바르지 않습니다."
           : apiMessage(result, fallbackMessage);
         throw new Error(message);
       }
@@ -882,6 +916,7 @@ export default function Home() {
         localStorage.setItem(`study-flow-plans-${result.user.id}`, legacyPlans);
       }
       sessionTokenRef.current = "";
+      await offerLocalTransfer(result.user);
       localStorage.setItem("study-flow-session", JSON.stringify({ ok: true, user: result.user, account: result.account }));
       localStorage.removeItem("study-flow-user");
       setPlans([]); setUser(result.user); setLoginPin("");
@@ -894,14 +929,17 @@ export default function Home() {
     event.preventDefault();
     const name = loginName.trim();
     const password = loginPin;
-    if (name.length < 2 || name.length > 30) { setLoginError("별명은 2~30자로 입력해 주세요."); return; }
+    if (ageGroup === "under14") { startLocalMode(); return; }
+    if (name.length < 2 || name.length > 30) { setLoginError("로그인 아이디는 2~30자로 입력해 주세요."); return; }
+    if (displayName.trim().length < 2 || displayName.trim().length > 30) { setLoginError("공개 별명은 2~30자로 입력해 주세요."); return; }
     if (!MODERN_PASSWORD.test(password)) { setLoginError("비밀번호는 영문자·숫자·특수문자를 포함한 8자 이상으로 입력해 주세요."); return; }
     if (password !== passwordConfirm) { setLoginError("비밀번호 확인이 일치하지 않습니다."); return; }
+    if (!recoveryAcknowledged) { setLoginError("계정 복구 제한을 확인해 주세요."); return; }
     setLoginStatus("loading"); setLoginError("");
     try {
       const response = await fetch("/api/account/register", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name, password, passwordConfirm, grade, ageGroup }),
+        body: JSON.stringify({ loginId: name, displayName: displayName.trim(), password, passwordConfirm, grade, ageGroup, recoveryAcknowledged }),
       });
       const result = await readJsonResponse(response);
       if (!response.ok || !result.ok || !result.user) {
@@ -909,12 +947,62 @@ export default function Home() {
         throw new Error(apiMessage(result, fallback));
       }
       sessionTokenRef.current = "";
+      await offerLocalTransfer(result.user);
       localStorage.setItem("study-flow-session", JSON.stringify({ ok: true, user: result.user, account: result.account }));
       localStorage.removeItem("study-flow-user");
-      setPlans([]); setUser(result.user); setLoginPin(""); setPasswordConfirm("");
+      setPlans([]); setUser(result.user); setLoginPin(""); setPasswordConfirm(""); setRecoveryAcknowledged(false);
       window.dispatchEvent(new Event("study-session-changed"));
     } catch (registerFailure) { setLoginError(registerFailure.message); }
     finally { setLoginStatus("idle"); }
+  };
+
+  const startLocalMode = () => {
+    if (!localModeAcknowledged) { setLoginError("학습 기록을 복구할 수 없다는 안내를 확인해 주세요."); return; }
+    const localUser = { id: "local-device", displayName: displayName.trim() || "로컬 학습자", grade, isChild: true, localOnly: true };
+    localStorage.setItem("study-flow-session", JSON.stringify({ ok: true, user: localUser, localOnly: true }));
+    setUser(localUser); setLoginError(""); setPlans([]); setView("form");
+    window.dispatchEvent(new Event("study-session-changed"));
+  };
+
+  const offerLocalTransfer = async (serverUser) => {
+    let localPlans = []; let localMistakes = [];
+    try { localPlans = JSON.parse(localStorage.getItem("study-flow-plans-local-device") || "[]"); } catch {}
+    try { localMistakes = JSON.parse(localStorage.getItem("study-flow-local-mistakes") || "[]"); } catch {}
+    if (!localPlans.length && !localMistakes.length) return;
+    const completed = localPlans.flatMap((item) => item.items || []).filter((item) => item.done).length;
+    if (!window.confirm(`서버 계정으로 옮길 로컬 데이터:\n계획 ${localPlans.length}개, 완료 기록 ${completed}개, 오답 ${localMistakes.length}개\n기존 서버 데이터와 ID가 같은 항목은 서버 항목을 유지합니다. 지금 이전할까요?`)) return;
+    try {
+      const [planResponse, mistakeResponse] = await Promise.all([fetch("/api/sync"), fetch("/api/mistakes")]);
+      const serverPlanData = await readJsonResponse(planResponse); const serverMistakeData = await readJsonResponse(mistakeResponse);
+      if (!planResponse.ok || !mistakeResponse.ok) throw new Error();
+      const serverPlans = Array.isArray(serverPlanData.plans) ? serverPlanData.plans : [];
+      const serverMistakes = Array.isArray(serverMistakeData.mistakes) ? serverMistakeData.mistakes : [];
+      const planIds = new Set(serverPlans.map((item) => item.id)); const mistakeIds = new Set(serverMistakes.map((item) => item.id));
+      const mergedPlans = [...serverPlans, ...localPlans.filter((item) => !planIds.has(item.id))];
+      const mergedMistakes = [...serverMistakes, ...localMistakes.filter((item) => !mistakeIds.has(item.id))];
+      const [savePlans, saveMistakes] = await Promise.all([
+        fetch("/api/sync", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ plans: mergedPlans, revision: Number(serverPlanData.revision || 0), mutationId: crypto.randomUUID() }) }),
+        fetch("/api/mistakes", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ mistakes: mergedMistakes }) }),
+      ]);
+      if (!savePlans.ok || !saveMistakes.ok) throw new Error();
+      localStorage.removeItem("study-flow-plans-local-device"); localStorage.removeItem("study-flow-local-mistakes");
+      localStorage.setItem(`study-flow-plans-${serverUser.id}`, JSON.stringify(mergedPlans));
+    } catch { setLoginError("로컬 데이터는 그대로 두었습니다. 로그인 후 다시 이전해 주세요."); }
+  };
+
+  const exportLocalData = () => {
+    const payload = { format: "study-flow-local", version: 1, exportedAt: new Date().toISOString(), plans, mistakes };
+    const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" })); link.download = "공부하자-로컬-데이터.json"; link.click(); URL.revokeObjectURL(link.href);
+  };
+
+  const importLocalData = async (event) => {
+    const file = event.target.files?.[0]; if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text());
+      if (parsed?.format !== "study-flow-local" || !Array.isArray(parsed.plans) || !Array.isArray(parsed.mistakes)) throw new Error();
+      setPlans(parsed.plans); setMistakes(parsed.mistakes); localStorage.setItem("study-flow-local-mistakes", JSON.stringify(parsed.mistakes)); setShareStatus("선택한 파일의 로컬 데이터를 가져왔어요.");
+    } catch { setShareStatus("올바른 공부하자 로컬 데이터 파일이 아닙니다."); }
+    event.target.value = "";
   };
 
   const logout = async () => {
@@ -940,6 +1028,7 @@ export default function Home() {
 
   const askCoach = async (event) => {
     event.preventDefault();
+    if (user?.isChild) { setAnswer({ text: "만 14세 미만 이용 모드에서는 질문을 외부 서비스로 전송하지 않습니다.", sources: [] }); setAnswerStatus("error"); return; }
     const trimmedQuestion = question.trim();
     if (!trimmedQuestion || answerStatus === "loading") return;
 
@@ -991,7 +1080,7 @@ export default function Home() {
       return;
     }
     const shareKey = getPlanShareKey(activePlan);
-    if (sharedPlansRef.current.some((item) => getPlanShareKey(item) === shareKey && (item.ownerId === user.id || item.author === user.name))) {
+    if (sharedPlansRef.current.some((item) => getPlanShareKey(item) === shareKey && (item.ownerId === user.id || item.author === user.displayName))) {
       setShareStatus("이미 커뮤니티에 게시한 계획이에요.");
       return;
     }
@@ -1001,7 +1090,7 @@ export default function Home() {
       sourceId: activePlan.id,
       shareKey,
       ownerId: user.id,
-      author: user.name,
+      author: user.displayName,
       grade: activePlan.grade || user.grade,
       likes: 0,
       items: activePlan.items.map((item) => ({ ...item })),
@@ -1014,7 +1103,7 @@ export default function Home() {
   };
 
   const deleteSharedPlan = (shared) => {
-    const isOwner = shared.ownerId === user.id || (!shared.ownerId && shared.sourceId && shared.author === user.name);
+    const isOwner = shared.ownerId === user.id || (!shared.ownerId && shared.sourceId && shared.author === user.displayName);
     if (!isOwner) return;
     if (!window.confirm("커뮤니티에서 이 게시 계획을 삭제할까요? 보관함의 원본 계획은 그대로 유지됩니다.")) return;
     const next = sharedPlansRef.current.filter((item) => item.id !== shared.id);
@@ -1132,6 +1221,7 @@ export default function Home() {
 
   const submitContact = async (event) => {
     event.preventDefault();
+    if (user?.isChild) { setContactStatus("error"); setContactMessage("만 14세 미만 이용자는 보호자와 함께 문의해 주세요. 이 화면에서는 외부로 정보를 전송하지 않습니다."); return; }
     setContactStatus("sending");
     setContactMessage("");
 
@@ -1191,11 +1281,11 @@ export default function Home() {
         <div className="contact-row">
           <label>
             <span>회사·기관명</span>
-            <input name="company" placeholder="예: 공부교육" required />
+            <input name="company" placeholder="예: 공부교육 (선택)" />
           </label>
           <label>
             <span>담당자명</span>
-            <input name="name" placeholder="홍길동" required />
+            <input name="name" placeholder="필요한 경우에만 입력 (선택)" />
           </label>
         </div>
         <label>
@@ -1219,8 +1309,9 @@ export default function Home() {
         </label>
         <label className="consent-field">
           <input type="checkbox" name="privacy_consent" value="동의" required />
-          <span>문의 답변을 위한 개인정보 수집·이용에 동의합니다.</span>
+          <span>문의 정보가 제출 시 Formspree로 전송되는 개인정보 수집·외부 전송에 동의합니다.</span>
         </label>
+        <p className="privacy"><a href="/privacy">개인정보처리방침</a> · 제출 버튼을 누르기 전에는 외부 전송이 발생하지 않습니다.{user?.localOnly && " 보호자와 함께 문의하고 개인 식별 정보를 입력하지 마세요."}</p>
         <input type="hidden" name="_subject" value="[공부하자!] 새로운 제휴 문의" />
         {contactMessage && <p className={`form-status ${contactStatus}`} role="status">{contactMessage}</p>}
         <button className="primary-button" type="submit" disabled={contactStatus === "sending"}>
@@ -1246,7 +1337,7 @@ export default function Home() {
           <div className="auth-copy">
             <p className="eyebrow">FREE STUDY PLANNER</p>
             <h1>시험 공부를<br /><em>실행 가능한 계획으로.</em></h1>
-            <p>시험일, 범위, 가능한 요일을 입력하면 남은 기간에 맞춰 학습과 복습 일정을 나눠드립니다. 같은 별명과 로그인 코드로 어느 기기에서나 계획을 이어갈 수 있어요.</p>
+            <p>시험일, 범위, 가능한 요일을 입력하면 남은 기간에 맞춰 학습과 복습 일정을 나눠드립니다. 같은 로그인 아이디와 비밀번호로 어느 기기에서나 계획을 이어갈 수 있어요.</p>
             <ul className="hero-points">
               <li>시험 전 마지막 날은 전체 복습으로 자동 배정</li>
               <li>학습 가능 요일과 하루 공부 시간을 직접 설정</li>
@@ -1256,12 +1347,14 @@ export default function Home() {
           <form className="auth-card" onSubmit={authMode === "login" ? login : register}>
             <div className="auth-tabs" role="tablist" aria-label="계정 작업 선택"><button type="button" role="tab" aria-selected={authMode === "login"} onClick={() => { setAuthMode("login"); setLoginError(""); }}>로그인</button><button type="button" role="tab" aria-selected={authMode === "register"} onClick={() => { setAuthMode("register"); setLoginError(""); }}>새 계정 만들기</button></div>
             <div className="card-heading"><span>{authMode === "login" ? "기존 계정 로그인" : "처음 계정 만들기"}</span><span className="step">{authMode === "login" ? "LOGIN" : "REGISTER"}</span></div>
-            <label><span>이름 또는 별명</span><input value={loginName} minLength="2" maxLength="30" required onChange={(event) => setLoginName(event.target.value)} placeholder="예: 확률마스터" autoComplete="username" autoFocus /></label>
-            <label><span>비밀번호</span><div className="password-field"><input type={showLoginPin ? "text" : "password"} minLength={authMode === "login" ? 6 : 8} maxLength="64" required value={loginPin} onChange={(event) => setLoginPin(event.target.value)} placeholder={authMode === "login" ? "기존 비밀번호 또는 숫자 코드" : "영문·숫자·특수문자 포함 8자 이상"} autoComplete={authMode === "login" ? "current-password" : "new-password"} /><button type="button" aria-pressed={showLoginPin} aria-label={showLoginPin ? "비밀번호 숨기기" : "비밀번호 보기"} onClick={() => setShowLoginPin((visible) => !visible)}>{showLoginPin ? "숨기기" : "보기"}</button></div></label>
-            {authMode === "register" && <><label><span>비밀번호 확인</span><input type="password" minLength="8" maxLength="64" required value={passwordConfirm} onChange={(event) => setPasswordConfirm(event.target.value)} autoComplete="new-password" /></label><label><span>현재 학년</span><select value={grade} required onChange={(event) => setGrade(event.target.value)}>{["초4","초5","초6","중1","중2","중3","고1","고2","고3"].map((item) => <option key={item}>{item}</option>)}</select></label><label><span>연령 구분</span><select value={ageGroup} required onChange={(event) => setAgeGroup(event.target.value)}><option value="under13">13세 미만</option><option value="over13">13세 이상</option></select></label></>}
-            <button className="primary-button" type="submit" disabled={loginStatus === "loading"}>{loginStatus === "loading" ? "처리하는 중..." : authMode === "login" ? "로그인" : "새 계정 만들기"} <span>→</span></button>
+            {(authMode === "login" || ageGroup === "over14") && <label><span>로그인 아이디</span><input value={loginName} minLength="2" maxLength="30" required onChange={(event) => setLoginName(event.target.value)} placeholder="예: studymaster24" autoComplete="username" autoFocus /><small>로그인할 때만 사용하며 다른 이용자에게 공개되지 않습니다.</small></label>}
+            {authMode === "register" && <><label><span>공개 별명</span><input value={displayName} minLength="2" maxLength="30" required onChange={(event) => setDisplayName(event.target.value)} /><small>댓글과 학습 화면에 표시됩니다. 다른 사람과 같은 별명도 사용할 수 있습니다.</small></label><label><span>현재 학년</span><select value={grade} required onChange={(event) => setGrade(event.target.value)}>{["초4","초5","초6","중1","중2","중3","고1","고2","고3"].map((item) => <option key={item}>{item}</option>)}</select></label><label><span>연령 구분</span><select value={ageGroup} required onChange={(event) => setAgeGroup(event.target.value)}><option value="under14">만 14세 미만</option><option value="over14">만 14세 이상</option></select></label></>}
+            {(authMode === "login" || ageGroup === "over14") && <label><span>비밀번호</span><div className="password-field"><input type={showLoginPin ? "text" : "password"} minLength={authMode === "login" ? 6 : 8} maxLength="64" required value={loginPin} onChange={(event) => setLoginPin(event.target.value)} placeholder={authMode === "login" ? "기존 숫자 코드 또는 비밀번호" : "영문·숫자·특수문자 포함 8자 이상"} autoComplete={authMode === "login" ? "current-password" : "new-password"} /><button type="button" aria-pressed={showLoginPin} aria-label={showLoginPin ? "비밀번호 숨기기" : "비밀번호 보기"} onClick={() => setShowLoginPin((visible) => !visible)}>{showLoginPin ? "숨기기" : "보기"}</button></div></label>}
+            {authMode === "register" && ageGroup === "over14" && <><div className="password-warning" role="alert"><span aria-hidden="true">⚠</span><p><strong>중요:</strong> 비밀번호 찾기 및 복구 기능은 제공되지 않습니다. 비밀번호를 분실하면 기존 계정과 서버에 저장된 학습 데이터를 복구할 수 없으므로 안전하게 보관하세요.</p></div><label><span>비밀번호 확인</span><input type="password" minLength="8" maxLength="64" required value={passwordConfirm} onChange={(event) => setPasswordConfirm(event.target.value)} autoComplete="new-password" /></label><label className="consent-field recovery-consent"><input type="checkbox" checked={recoveryAcknowledged} onChange={(event) => setRecoveryAcknowledged(event.target.checked)} required /><span>비밀번호를 분실하면 계정과 서버 학습 데이터를 복구할 수 없음을 확인했습니다.</span></label></>}
+            {authMode === "register" && ageGroup === "under14" && <><div className="password-warning local-warning" role="alert"><p>만 14세 미만 이용자의 정보는 서버에 저장하지 않습니다.<br />학습 계획과 완료 기록은 현재 브라우저에만 저장되며 다른 기기와 동기화되지 않습니다.<br />브라우저 데이터나 앱 데이터를 삭제하면 계획을 복구할 수 없습니다.</p></div><label className="consent-field"><input type="checkbox" checked={localModeAcknowledged} onChange={(event) => setLocalModeAcknowledged(event.target.checked)} required /><span>기기 변경 또는 브라우저 데이터 삭제 시 학습 기록을 복구할 수 없음을 확인했습니다.</span></label></>}
+            <button className="primary-button" type="submit" disabled={loginStatus === "loading" || (authMode === "register" && (ageGroup === "under14" ? !localModeAcknowledged : !recoveryAcknowledged))}>{loginStatus === "loading" ? "처리하는 중..." : authMode === "login" ? "로그인" : ageGroup === "under14" ? "계정 없이 이 기기에서 시작하기" : "새 계정 만들기"} <span>→</span></button>
             {loginError && <p className="form-status error" role="alert">{loginError}</p>}
-            <p className="privacy">{authMode === "login" ? "기존 계정의 별명과 비밀번호를 입력하세요. 잘못 입력해도 새 계정이 만들어지지 않습니다." : "처음 이용한다면 새 계정을 만들어 주세요. 비밀번호는 복구가 어려울 수 있으므로 안전하게 보관하세요."}</p>
+            <p className="privacy">{authMode === "login" ? "아이디와 비밀번호를 다시 확인해 주세요. 현재 비밀번호 찾기 기능은 제공하지 않습니다." : "로그인 아이디는 계정마다 고유하며 공개용 별명으로 사용하지 않습니다."}</p>
           </form>
         </section>
 
@@ -1294,7 +1387,7 @@ export default function Home() {
         <section className="public-section faq-section" aria-labelledby="faq-title">
           <div className="section-heading"><p className="eyebrow">FAQ</p><h2 id="faq-title">자주 묻는 질문</h2></div>
           <div className="faq-grid">
-            <details><summary>다른 기기에서도 계획을 볼 수 있나요?</summary><p>네. 같은 별명과 로그인 코드를 입력하면 서버에 동기화된 계획과 완료 기록을 불러옵니다. 인터넷 연결이 잠시 끊기면 이 기기에 저장하고 연결이 돌아온 뒤 다시 동기화합니다.</p></details>
+            <details><summary>다른 기기에서도 계획을 볼 수 있나요?</summary><p>만 14세 이상 서버 계정은 같은 로그인 아이디와 비밀번호로 계획과 완료 기록을 동기화할 수 있습니다. 만 14세 미만 로컬 모드는 현재 브라우저에서만 사용할 수 있으며 자동 동기화되지 않습니다.</p></details>
             <details><summary>만든 계획을 그대로 따라야 하나요?</summary><p>아닙니다. 학교 일정이나 이해도에 따라 분량을 바꾸는 것이 좋습니다. 하루를 놓쳤다면 다음 날에 전부 몰아넣기보다 중요도가 낮은 내용을 줄이고 복습일을 지키세요.</p></details>
             <details><summary>학습 코치 답변은 항상 정확한가요?</summary><p>학습 코치는 이해를 돕는 보조 기능입니다. 중요한 시험 정보와 교과 내용은 학교 교재와 담당 교사의 안내를 우선하고, 인터넷 출처가 표시된 경우 원문도 함께 확인하세요.</p></details>
             <details><summary>누가 이용할 수 있나요?</summary><p>초등학교 고학년부터 고등학생까지 사용할 수 있도록 만들었습니다. 학년은 계획을 구분하기 위한 항목이며, 누구나 무료로 플래너와 공개 학습 자료를 이용할 수 있습니다.</p></details>
@@ -1324,13 +1417,13 @@ export default function Home() {
           공부<span>하자!</span>
         </button>
         <div className="nav-right">
-          <button className="user-badge" onClick={logout}>{user.grade} · {user.name} <small>로그아웃</small></button>
-          <span className={`sync-status ${syncStatus}`}>{syncStatus === "idle" ? "불러오는 중" : syncStatus === "syncing" ? "동기화 중" : syncStatus === "offline" ? "기기 저장됨" : "서버 저장됨"}</span>
+          <button className="user-badge" onClick={logout}>{user.grade} · {user.displayName} <small>{user.localOnly ? "로컬 종료" : "로그아웃"}</small></button>
+          <span className={`sync-status ${syncStatus}`}>{syncStatus === "local" ? "이 브라우저에만 저장" : syncStatus === "idle" ? "불러오는 중" : syncStatus === "syncing" ? "동기화 중" : syncStatus === "offline" ? "기기 저장됨" : "서버 저장됨"}</span>
           <button className="nav-link" onClick={() => setView("today")}>오늘의 공부</button>
           <button className="nav-link info-nav" onClick={() => setView("mistakes")}>오답 관리</button>
           <a className="nav-link info-nav" href="/guides">학습 가이드</a>
-          <button className="nav-link community-nav" onClick={() => setView("community")}>계획 둘러보기</button>
-          <button className="nav-link" onClick={() => setView("music")}>노래</button>
+          {!user.isChild && <button className="nav-link community-nav" onClick={() => setView("community")}>계획 둘러보기</button>}
+          {!user.isChild && <button className="nav-link" onClick={() => setView("music")}>노래</button>}
           <button className="nav-link contact-nav" onClick={() => setView("contact")}>제휴 문의</button>
           <button className="nav-link" onClick={() => setView("library")}>
             계획 보관함 <b>{plans.length}</b>
@@ -1357,9 +1450,9 @@ export default function Home() {
           <div className="mistake-list">{mistakes.map((item) => { const repeated = mistakes.filter((entry) => entry.subject === item.subject && entry.unit === item.unit).length >= 2; return <article key={item.id}><span>{item.reason}</span><h2>{item.subject} · {item.unit} {repeated && <b>취약 단원</b>}</h2><p>{item.memo}</p><small>다시 보기 {item.reviewDate}</small></article>; })}</div>
         </section>
       ) : view === "settings" ? (
-        <section className="today-shell"><header className="library-header"><div><p className="eyebrow">ACCOUNT SETTINGS</p><h1>계정 설정</h1><p>서버 저장 정보: 별명 {user.name}, 학년 {user.grade}, 연령 분류 {user.isChild ? "아동" : "일반"}</p></div></header>
-          <div className="settings-grid"><form className="planner-card" onSubmit={changeLoginCode}><div className="settings-card-heading"><div><span>SECURITY</span><h2>로그인 코드 변경</h2></div><p>변경하면 모든 기기에서 다시 로그인해야 해요.</p></div><label><span>현재 비밀번호</span><div className="password-field"><input type={showCurrentCode ? "text" : "password"} name="currentCode" autoComplete="current-password" required /><button type="button" aria-pressed={showCurrentCode} onClick={() => setShowCurrentCode((visible) => !visible)}>{showCurrentCode ? "숨기기" : "보기"}</button></div></label><label><span>새 비밀번호</span><div className="password-field"><input type={showNewCode ? "text" : "password"} name="newCode" minLength="8" maxLength="64" autoComplete="new-password" placeholder="영문·숫자·특수문자 포함 8자 이상" required /><button type="button" aria-pressed={showNewCode} onClick={() => setShowNewCode((visible) => !visible)}>{showNewCode ? "숨기기" : "보기"}</button></div><small>내부 공백은 사용할 수 없으며 앞뒤 공백은 제거됩니다.</small></label><button className="primary-button" type="submit">비밀번호 변경</button></form><form className="planner-card danger-card" onSubmit={deleteAccount}><div className="settings-card-heading"><div><span>DANGER ZONE</span><h2>계정 및 데이터 삭제</h2></div></div><p>계정, 계획, 완료 기록, 오답과 모든 세션을 삭제합니다. 복구할 수 없습니다.</p><label><span>확인을 위해 별명 “{user.name}” 입력</span><input name="confirmation" required /></label><button className="primary-button" type="submit">계정 영구 삭제</button></form></div>
-          {settingsMessage && <p className="form-status" role="status">{settingsMessage}</p>}<button className="ghost-button" onClick={logout}>현재 기기 로그아웃</button> <button className="ghost-button" onClick={logoutAllDevices}>모든 기기에서 로그아웃</button>
+        <section className="today-shell"><header className="library-header"><div><p className="eyebrow">ACCOUNT SETTINGS</p><h1>{user.localOnly ? "로컬 데이터 설정" : "계정 설정"}</h1><p>{user.localOnly ? "계획과 완료 기록은 이 브라우저에만 저장됩니다." : `공개 별명 ${user.displayName}, 학년 ${user.grade}`}</p></div></header>
+          {user.localOnly ? <div className="settings-grid"><article className="planner-card"><h2>로컬 데이터 백업</h2><p>내보내기 파일에는 계획과 오답만 포함되며 비밀번호·세션·토큰은 포함되지 않습니다.</p><button className="primary-button" type="button" onClick={exportLocalData}>JSON으로 내보내기</button><label className="ghost-button">JSON 가져오기<input className="visually-hidden" type="file" accept="application/json,.json" onChange={importLocalData} /></label></article><article className="planner-card danger-card"><h2>이 기기의 데이터 삭제</h2><p>브라우저 데이터를 삭제하면 복구할 수 없습니다.</p><button className="primary-button" type="button" onClick={() => { if (window.confirm("이 브라우저의 로컬 학습 데이터를 삭제할까요?")) { localStorage.removeItem("study-flow-plans-local-device"); localStorage.removeItem("study-flow-local-mistakes"); setPlans([]); setPlan([]); setMistakes([]); } }}>로컬 학습 데이터 삭제</button></article></div> : <div className="settings-grid"><form className="planner-card" onSubmit={changeDisplayName}><div className="settings-card-heading"><div><span>PROFILE</span><h2>공개 별명 변경</h2></div></div><label><span>공개 별명</span><input name="displayName" defaultValue={user.displayName} minLength="2" maxLength="30" required /></label><button className="primary-button" type="submit">공개 별명 변경</button></form><form className="planner-card" onSubmit={changeLoginCode}><div className="settings-card-heading"><div><span>SECURITY</span><h2>비밀번호 변경</h2></div><p>변경하면 모든 기기에서 다시 로그인해야 해요.</p></div><label><span>현재 비밀번호</span><div className="password-field"><input type={showCurrentCode ? "text" : "password"} name="currentCode" autoComplete="current-password" required /><button type="button" aria-pressed={showCurrentCode} onClick={() => setShowCurrentCode((visible) => !visible)}>{showCurrentCode ? "숨기기" : "보기"}</button></div></label><label><span>새 비밀번호</span><div className="password-field"><input type={showNewCode ? "text" : "password"} name="newCode" minLength="8" maxLength="64" autoComplete="new-password" placeholder="영문·숫자·특수문자 포함 8자 이상" required /><button type="button" aria-pressed={showNewCode} onClick={() => setShowNewCode((visible) => !visible)}>{showNewCode ? "숨기기" : "보기"}</button></div></label><button className="primary-button" type="submit">비밀번호 변경</button></form><form className="planner-card danger-card" onSubmit={deleteAccount}><h2>계정 및 데이터 삭제</h2><p>계정, 계획·완료·오답과 모든 세션을 영구 삭제하며 복구할 수 없습니다.</p><label><span>현재 비밀번호</span><input type="password" name="currentPassword" autoComplete="current-password" required /></label><label><span>“계정 영구 삭제” 입력</span><input name="confirmation" autoComplete="off" required /></label><button className="primary-button" type="submit">계정 및 데이터 삭제</button></form></div>}
+          {settingsMessage && <p className="form-status" role="status">{settingsMessage}</p>}<button className="ghost-button" onClick={logout}>{user.localOnly ? "로컬 모드 종료" : "현재 기기 로그아웃"}</button> {!user.localOnly && <button className="ghost-button" onClick={logoutAllDevices}>모든 기기에서 로그아웃</button>}
         </section>
       ) : view === "edit" && editingPlan ? (
         <section className="edit-shell">
@@ -1499,7 +1592,7 @@ export default function Home() {
           <div className="community-notice">현재는 이 브라우저 안에서 작동하는 체험 커뮤니티예요. 실제 다중 사용자 공유는 서버 연결 후 사용할 수 있어요.</div>
           <div className="library-grid">
             {communityPlans.map((shared) => {
-              const isOwnPost = shared.ownerId === user.id || (!shared.ownerId && shared.sourceId && shared.author === user.name);
+              const isOwnPost = shared.ownerId === user.id || (!shared.ownerId && shared.sourceId && shared.author === user.displayName);
               return (
               <article className={`library-card community-card ${isOwnPost ? "own-post" : ""}`} key={shared.id}>
                 <div className="library-number">♡ {shared.likes || 0}</div>
@@ -1788,7 +1881,7 @@ export default function Home() {
         </section>
       )}
 
-      <DisqusComments />
+      {!user.isChild && <DisqusComments />}
 
       <footer>
         <span>공부하자!</span>

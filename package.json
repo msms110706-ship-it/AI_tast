@@ -6,7 +6,11 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build && node scripts/package-output.mjs",
-    "test": "node --test tests/*.test.mjs",
+    "test": "node tests/account.test.mjs",
+    "account:cleanup": "node scripts/cleanup-account.mjs",
+    "account:audit": "node scripts/audit-study-data.mjs",
+    "account:schema-audit": "node scripts/audit-account-schema.mjs",
+    "account:repair-mappings": "node scripts/repair-account-mappings.mjs",
     "start": "next start",
     "lint": "next lint"
   },

@@ -468,6 +468,10 @@ footer p { font-size: 11px; opacity: .7; }
 .auth-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 24px; padding: 4px; background: #edf1fb; border-radius: 4px; }
 .auth-tabs button { min-height: 42px; border: 1px solid transparent; border-radius: 3px; color: #66708f; background: transparent; font-weight: 800; font-size: 12px; }
 .auth-tabs button[aria-selected="true"] { border-color: var(--ink); color: var(--ink); background: white; box-shadow: 2px 2px 0 var(--light-blue); }
+.password-warning { display: grid; grid-template-columns: auto 1fr; gap: 12px; margin: -5px 0 20px; padding: 14px; border: 1px solid #c98222; border-left-width: 5px; border-radius: 4px; color: #653b08; background: #fff4d9; }
+.password-warning > span { font-size: 20px; line-height: 1.3; }
+.password-warning p { margin: 0; font-size: 12px; line-height: 1.7; word-break: keep-all; }
+.recovery-consent { align-items: flex-start; padding: 12px; border: 1px solid #d7b46c; background: #fffaf0; }
 .contact-entry {
   display: block; margin: 18px auto 0; padding: 5px; border: 0; background: transparent;
   color: var(--blue); font-size: 11px; font-weight: 800;

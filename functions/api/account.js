@@ -1,8 +1,8 @@
 import { deleteAllSessions, getSessionUserId, hashPin, normalizeName, passwordPolicy, sessionCookie, sha256 } from "../_lib/auth.js";
 import { apiError, json } from "../_lib/http.js";
-import { loginAccount, readRequestBody, registerAccount } from "../_lib/account-service.js";
+import { loginAccount, passwordPolicyError, readRequestBody, registerAccount } from "../_lib/account-service.js";
+import { discoverAccountDeletion, executeAccountDeletion } from "../_lib/account-deletion.js";
 
-const STRONG_CODE = /^(?=.*[A-Za-z])(?=.*\d)(?=.*[^A-Za-z\d\s])\S{8,64}$/;
 const MAX_ACCOUNTS_PER_NAME = 20;
 
 async function accountCandidates(store, normalizedName) {
@@ -17,15 +17,6 @@ async function accountCandidates(store, normalizedName) {
     if (account) candidates.push({ account, accountKey: key });
   }
   return { candidates, indexKey, indexedKeys };
-}
-
-async function matchingAccount(candidates, pin, excludedId = "") {
-  for (const candidate of candidates) {
-    if (candidate.account.id === excludedId) continue;
-    const iterations = candidate.account.iterations ?? passwordPolicy.iterations;
-    if ((await hashPin(pin, candidate.account.salt, iterations)) === candidate.account.pinHash) return candidate;
-  }
-  return null;
 }
 
 async function handlePost(context) {
@@ -53,18 +44,25 @@ async function authenticated(context) {
 
 async function handleGet(context) {
   const auth = await authenticated(context); if (auth.error) return auth.error;
-  return json({ ok: true, account: { nickname: auth.account.name, grade: auth.account.grade, isChild: auth.account.isChild, createdAt: auth.account.createdAt, schemaVersion: auth.account.schemaVersion || 1 } });
+  return json({ ok: true, account: { displayName: auth.account.displayName || auth.account.name, grade: auth.account.grade, createdAt: auth.account.createdAt, schemaVersion: auth.account.schemaVersion || 1 } });
 }
 
 async function handlePatch(context) {
   const auth = await authenticated(context); if (auth.error) return auth.error;
   let body; try { body = await context.request.json(); } catch { return apiError("INVALID_BODY", "입력 내용을 확인해 주세요."); }
+  if (Object.hasOwn(body, "displayName") && !Object.hasOwn(body, "newCode")) {
+    const displayName = String(body.displayName || "").trim();
+    if (displayName.length < 2 || displayName.length > 30) return apiError("INVALID_DISPLAY_NAME", "공개 별명은 2~30자로 입력해 주세요.", 400);
+    const updated = { ...auth.account, displayName, accountId: auth.userId, loginId: auth.account.loginId || auth.account.name, updatedAt: new Date().toISOString(), schemaVersion: Math.max(Number(auth.account.schemaVersion || 1), 5) };
+    await auth.store.put(`account-id:${auth.userId}`, JSON.stringify(updated));
+    await auth.store.put(`user:${auth.userId}`, JSON.stringify(updated));
+    return json({ ok: true, account: { displayName, grade: updated.grade } });
+  }
   const currentCode = String(body.currentCode || "").trim(); const newCode = String(body.newCode || "").trim();
-  if (!STRONG_CODE.test(newCode) || /\s/.test(newCode)) return apiError("WEAK_LOGIN_CODE", "새 코드는 영문자·숫자·특수문자를 포함해 8자 이상으로 입력해 주세요.");
+  const policyError = passwordPolicyError(auth.account.name, newCode);
+  if (policyError) return apiError("WEAK_LOGIN_CODE", policyError);
   if ((await hashPin(currentCode, auth.account.salt, auth.account.iterations || passwordPolicy.iterations)) !== auth.account.pinHash) return apiError("INVALID_CREDENTIALS", "입력 내용을 확인해 주세요.", 401);
-  const { candidates: collisionCandidates } = await accountCandidates(auth.store, normalizeName(auth.account.name));
-  if (await matchingAccount(collisionCandidates, newCode, auth.userId)) return apiError("CREDENTIAL_COMBINATION_EXISTS", "같은 별명과 새 비밀번호 조합의 계정이 이미 있습니다.", 409);
-  const salt = crypto.randomUUID(); const canonicalKey = `account-id:${auth.userId}`; const updated = { ...auth.account, accountKey: canonicalKey, salt, iterations: passwordPolicy.iterations, pinHash: await hashPin(newCode, salt), updatedAt: new Date().toISOString(), schemaVersion: 3 };
+  const salt = crypto.randomUUID(); const canonicalKey = `account-id:${auth.userId}`; const updated = { ...auth.account, accountKey: canonicalKey, salt, iterations: passwordPolicy.iterations, pinHash: await hashPin(newCode, salt), updatedAt: new Date().toISOString(), schemaVersion: Math.max(Number(auth.account.schemaVersion || 1), 3) };
   await auth.store.put(canonicalKey, JSON.stringify(updated)); await auth.store.put(`user:${auth.userId}`, JSON.stringify(updated));
   const nameHash = await sha256(normalizeName(auth.account.name)); await auth.store.put(`name:${nameHash}`, auth.userId);
   // Update retained legacy copies for this same account so an old password cannot revive them.
@@ -77,28 +75,28 @@ async function handlePatch(context) {
 async function handleDelete(context) {
   const auth = await authenticated(context); if (auth.error) return auth.error;
   let body; try { body = await context.request.json(); } catch { return apiError("INVALID_BODY", "확인 문구를 입력해 주세요."); }
-  if (String(body.confirmation || "").trim() !== auth.account.name) return apiError("CONFIRMATION_MISMATCH", "별명을 정확히 입력해 주세요.");
-  await deleteAllSessions(auth.store, auth.userId);
-  const normalizedName = normalizeName(auth.account.name);
-  const nameHash = await sha256(normalizedName);
-  const mappedId = await auth.store.get(`name:${nameHash}`);
-  const indexKey = `accounts:${nameHash}`;
-  const indexedKeys = (await auth.store.get(indexKey, "json")) || [];
-  const { candidates } = await accountCandidates(auth.store, normalizedName);
-  const accountKeys = candidates.filter((candidate) => candidate.account.id === auth.userId).map((candidate) => candidate.accountKey);
-  const removingKeys = new Set([...accountKeys, auth.account.accountKey, `account-id:${auth.userId}`, `user:${auth.userId}`]);
-  const remainingKeys = indexedKeys.filter((key) => !removingKeys.has(key));
-  if (remainingKeys.length) await auth.store.put(indexKey, JSON.stringify(remainingKeys));
-  else await auth.store.delete(indexKey);
-  await Promise.all([...new Set([...removingKeys, `plans:${auth.userId}`, `mistakes:${auth.userId}`])].map((key) => auth.store.delete(key)));
-  if (mappedId === auth.userId) await auth.store.delete(`name:${nameHash}`);
-  return json({ ok: true }, 200, { "set-cookie": sessionCookie("", 0) });
+  const currentPassword = String(body.currentPassword || "");
+  const iterations = auth.account.iterations || passwordPolicy.iterations;
+  if (!currentPassword || (await hashPin(currentPassword, auth.account.salt, iterations)) !== auth.account.pinHash) return apiError("INVALID_CREDENTIALS", "현재 비밀번호가 올바르지 않습니다.", 401);
+  if (String(body.confirmation || "").trim() !== "계정 영구 삭제") return apiError("CONFIRMATION_MISMATCH", "확인 문구를 정확히 입력해 주세요.", 400);
+  try {
+    const plan = await discoverAccountDeletion(auth.store, { ...auth.account, id: auth.userId });
+    await executeAccountDeletion(auth.store, plan);
+    return json({ ok: true }, 200, { "set-cookie": sessionCookie("", 0) });
+  } catch (error) {
+    console.error("Account deletion incomplete", { completedOperations: Number(error?.completed || 0) });
+    return apiError("ACCOUNT_DELETION_INCOMPLETE", "계정 삭제를 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.", 500);
+  }
 }
 
-export function onRequest(context) {
-  if (context.request.method === "POST") return handlePost(context);
-  if (context.request.method === "GET") return handleGet(context);
-  if (context.request.method === "PATCH") return handlePatch(context);
-  if (context.request.method === "DELETE") return handleDelete(context);
-  return apiError("METHOD_NOT_ALLOWED", "지원하지 않는 요청입니다.", 405);
+export async function onRequest(context) {
+  try {
+    if (context.request.method === "POST") return await handlePost(context);
+    if (context.request.method === "GET") return await handleGet(context);
+    if (context.request.method === "PATCH") return await handlePatch(context);
+    if (context.request.method === "DELETE") return await handleDelete(context);
+    return apiError("METHOD_NOT_ALLOWED", "지원하지 않는 요청입니다.", 405);
+  } catch {
+    return apiError("ACCOUNT_ERROR", "계정 요청을 처리하지 못했습니다.", 500);
+  }
 }

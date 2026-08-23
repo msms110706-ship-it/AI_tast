@@ -4,6 +4,11 @@ export function json(data, status = 200, headers = {}) {
     headers: {
       "content-type": "application/json; charset=utf-8",
       "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+      "referrer-policy": "strict-origin-when-cross-origin",
+      "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+      "x-frame-options": "DENY",
+      "content-security-policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
       ...headers,
     },
   });
