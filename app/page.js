@@ -428,8 +428,10 @@ function formatTimer(seconds) {
 export default function Home() {
   const defaultExam = useMemo(() => localDateString(addDays(new Date(), 14)), []);
   const [user, setUser] = useState(null);
+  const [authMode, setAuthMode] = useState("login");
   const [loginName, setLoginName] = useState("");
   const [loginPin, setLoginPin] = useState("");
+  const [passwordConfirm, setPasswordConfirm] = useState("");
   const [showLoginPin, setShowLoginPin] = useState(false);
   const [showCurrentCode, setShowCurrentCode] = useState(false);
   const [showNewCode, setShowNewCode] = useState(false);
@@ -481,11 +483,23 @@ export default function Home() {
   const [playlistForm, setPlaylistForm] = useState({ title: "", url: "", lyrics: "무가사" });
 
   useEffect(() => {
+    let cancelled = false;
     try {
       const session = JSON.parse(localStorage.getItem("study-flow-session") || "null");
       if (session?.user) {
         sessionTokenRef.current = session.token || "";
-        setUser(session.user);
+        const headers = session.token ? { authorization: `Bearer ${session.token}` } : {};
+        fetch("/api/account/me", { headers }).then(async (response) => {
+          const result = await readJsonResponse(response);
+          if (cancelled) return;
+          if (response.ok && result.ok && result.user) {
+            setUser(result.user);
+            localStorage.setItem("study-flow-session", JSON.stringify({ ok: true, user: result.user, account: result.account }));
+          } else {
+            localStorage.removeItem("study-flow-session");
+            sessionTokenRef.current = "";
+          }
+        }).catch(() => { if (!cancelled) setUser(session.user); });
       }
     } catch {}
     const shared = localStorage.getItem("study-flow-shared");
@@ -494,6 +508,7 @@ export default function Home() {
       sharedPlansRef.current = parsed;
       setSharedPlans(parsed);
     }
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -840,16 +855,15 @@ export default function Home() {
 
   const login = async (event) => {
     event.preventDefault();
-    const cleanedLoginCode = loginPin.trim();
+    const cleanedLoginCode = loginPin;
     if (!loginName.trim() || (!LEGACY_PIN.test(cleanedLoginCode) && !MODERN_PASSWORD.test(cleanedLoginCode))) {
       setLoginError("비밀번호는 영문자·숫자·특수문자를 포함한 8자 이상으로 입력해주세요. 기존 숫자 코드는 그대로 사용할 수 있어요.");
       return;
     }
     setLoginStatus("loading"); setLoginError("");
     try {
-      const requestOptions = { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: loginName.trim(), pin: cleanedLoginCode, grade, isUnder13: ageGroup === "under13" }) };
-      let response = await fetch("/api/account", requestOptions);
-      if (response.status === 405) response = await fetch("/api/account/", requestOptions);
+      const requestOptions = { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: loginName.trim(), password: cleanedLoginCode }) };
+      const response = await fetch("/api/account/login", requestOptions);
       const result = await readJsonResponse(response);
       if (!response.ok || !result.ok || !result.user) {
         const fallbackMessage = response.status === 404
@@ -858,7 +872,7 @@ export default function Home() {
             ? "로그인 서버에 일시적인 문제가 있어요. 잠시 후 다시 시도해주세요."
             : `로그인 서버 응답을 확인할 수 없어요. (상태 ${response.status})`;
         const message = response.status === 401
-          ? "현재 비밀번호가 일치하지 않아요. 기존 숫자 코드 계정은 처음 만든 코드를 그대로 입력해주세요."
+          ? "별명 또는 비밀번호가 올바르지 않습니다."
           : apiMessage(result, fallbackMessage);
         throw new Error(message);
       }
@@ -873,6 +887,33 @@ export default function Home() {
       setPlans([]); setUser(result.user); setLoginPin("");
       window.dispatchEvent(new Event("study-session-changed"));
     } catch (loginFailure) { setLoginError(loginFailure.message); }
+    finally { setLoginStatus("idle"); }
+  };
+
+  const register = async (event) => {
+    event.preventDefault();
+    const name = loginName.trim();
+    const password = loginPin;
+    if (name.length < 2 || name.length > 30) { setLoginError("별명은 2~30자로 입력해 주세요."); return; }
+    if (!MODERN_PASSWORD.test(password)) { setLoginError("비밀번호는 영문자·숫자·특수문자를 포함한 8자 이상으로 입력해 주세요."); return; }
+    if (password !== passwordConfirm) { setLoginError("비밀번호 확인이 일치하지 않습니다."); return; }
+    setLoginStatus("loading"); setLoginError("");
+    try {
+      const response = await fetch("/api/account/register", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name, password, passwordConfirm, grade, ageGroup }),
+      });
+      const result = await readJsonResponse(response);
+      if (!response.ok || !result.ok || !result.user) {
+        const fallback = response.status >= 500 ? "회원가입 서버에 일시적인 문제가 있어요." : `계정을 만들 수 없어요. (상태 ${response.status})`;
+        throw new Error(apiMessage(result, fallback));
+      }
+      sessionTokenRef.current = "";
+      localStorage.setItem("study-flow-session", JSON.stringify({ ok: true, user: result.user, account: result.account }));
+      localStorage.removeItem("study-flow-user");
+      setPlans([]); setUser(result.user); setLoginPin(""); setPasswordConfirm("");
+      window.dispatchEvent(new Event("study-session-changed"));
+    } catch (registerFailure) { setLoginError(registerFailure.message); }
     finally { setLoginStatus("idle"); }
   };
 
@@ -1212,15 +1253,15 @@ export default function Home() {
               <li>계획과 완료 기록을 계정별로 안전하게 동기화</li>
             </ul>
           </div>
-          <form className="auth-card" onSubmit={login}>
-            <div className="card-heading"><span>무료 플래너 시작하기</span><span className="step">SYNC</span></div>
-            <label><span>이름 또는 별명</span><input value={loginName} onChange={(event) => setLoginName(event.target.value)} placeholder="예: 확률마스터" autoFocus /></label>
-            <label><span>비밀번호</span><div className="password-field"><input type={showLoginPin ? "text" : "password"} minLength="6" maxLength="64" value={loginPin} onChange={(event) => setLoginPin(event.target.value)} placeholder="영문자·숫자·특수문자 포함 8자 이상" autoComplete="current-password" /><button type="button" aria-pressed={showLoginPin} aria-label={showLoginPin ? "비밀번호 숨기기" : "비밀번호 보기"} onClick={() => setShowLoginPin((visible) => !visible)}>{showLoginPin ? "숨기기" : "보기"}</button></div></label>
-            <label><span>현재 학년</span><select value={grade} onChange={(event) => setGrade(event.target.value)}>{["초4","초5","초6","중1","중2","중3","고1","고2","고3"].map((item) => <option key={item}>{item}</option>)}</select></label>
-            <label><span>연령 구분</span><select value={ageGroup} onChange={(event) => setAgeGroup(event.target.value)}><option value="under13">13세 미만</option><option value="over13">13세 이상</option></select></label>
-            <button className="primary-button" type="submit" disabled={loginStatus === "loading"}>{loginStatus === "loading" ? "확인하는 중..." : "내 공부방 들어가기"} <span>→</span></button>
+          <form className="auth-card" onSubmit={authMode === "login" ? login : register}>
+            <div className="auth-tabs" role="tablist" aria-label="계정 작업 선택"><button type="button" role="tab" aria-selected={authMode === "login"} onClick={() => { setAuthMode("login"); setLoginError(""); }}>로그인</button><button type="button" role="tab" aria-selected={authMode === "register"} onClick={() => { setAuthMode("register"); setLoginError(""); }}>새 계정 만들기</button></div>
+            <div className="card-heading"><span>{authMode === "login" ? "기존 계정 로그인" : "처음 계정 만들기"}</span><span className="step">{authMode === "login" ? "LOGIN" : "REGISTER"}</span></div>
+            <label><span>이름 또는 별명</span><input value={loginName} minLength="2" maxLength="30" required onChange={(event) => setLoginName(event.target.value)} placeholder="예: 확률마스터" autoComplete="username" autoFocus /></label>
+            <label><span>비밀번호</span><div className="password-field"><input type={showLoginPin ? "text" : "password"} minLength={authMode === "login" ? 6 : 8} maxLength="64" required value={loginPin} onChange={(event) => setLoginPin(event.target.value)} placeholder={authMode === "login" ? "기존 비밀번호 또는 숫자 코드" : "영문·숫자·특수문자 포함 8자 이상"} autoComplete={authMode === "login" ? "current-password" : "new-password"} /><button type="button" aria-pressed={showLoginPin} aria-label={showLoginPin ? "비밀번호 숨기기" : "비밀번호 보기"} onClick={() => setShowLoginPin((visible) => !visible)}>{showLoginPin ? "숨기기" : "보기"}</button></div></label>
+            {authMode === "register" && <><label><span>비밀번호 확인</span><input type="password" minLength="8" maxLength="64" required value={passwordConfirm} onChange={(event) => setPasswordConfirm(event.target.value)} autoComplete="new-password" /></label><label><span>현재 학년</span><select value={grade} required onChange={(event) => setGrade(event.target.value)}>{["초4","초5","초6","중1","중2","중3","고1","고2","고3"].map((item) => <option key={item}>{item}</option>)}</select></label><label><span>연령 구분</span><select value={ageGroup} required onChange={(event) => setAgeGroup(event.target.value)}><option value="under13">13세 미만</option><option value="over13">13세 이상</option></select></label></>}
+            <button className="primary-button" type="submit" disabled={loginStatus === "loading"}>{loginStatus === "loading" ? "처리하는 중..." : authMode === "login" ? "로그인" : "새 계정 만들기"} <span>→</span></button>
             {loginError && <p className="form-status error" role="alert">{loginError}</p>}
-            <p className="privacy">별명과 비밀번호가 모두 같을 때만 기존 계정으로 로그인합니다. 둘 중 하나라도 다르면 별도 계정이 만들어집니다. 새 비밀번호는 영문자·숫자·특수문자를 모두 포함해 8자 이상이어야 하며, 기존 숫자 로그인 코드는 기존 계정에서 그대로 사용할 수 있습니다.</p>
+            <p className="privacy">{authMode === "login" ? "기존 계정의 별명과 비밀번호를 입력하세요. 잘못 입력해도 새 계정이 만들어지지 않습니다." : "처음 이용한다면 새 계정을 만들어 주세요. 비밀번호는 복구가 어려울 수 있으므로 안전하게 보관하세요."}</p>
           </form>
         </section>
 

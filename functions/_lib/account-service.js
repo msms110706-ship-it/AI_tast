@@ -1,0 +1,136 @@
+import { createSession, hashPin, normalizeName, passwordPolicy, sessionCookie, sha256 } from "./auth.js";
+import { apiError, json } from "./http.js";
+
+export const NAME_MIN_LENGTH = 2;
+export const NAME_MAX_LENGTH = 30;
+export const PASSWORD_PATTERN = /^(?=.*[A-Za-z])(?=.*\d)(?=.*[^A-Za-z\d\s])\S{8,64}$/;
+const LEGACY_PIN_PATTERN = /^\d{6,8}$/;
+const GRADE_PATTERN = /^(초[4-6]|중[1-3]|고[1-3])$/;
+const AGE_GROUPS = new Set(["under13", "over13"]);
+const MAX_LEGACY_ACCOUNTS_PER_NAME = 20;
+
+function publicAccount(account) {
+  return {
+    name: account.name,
+    grade: account.grade,
+    ageGroup: (account.ageGroup || (account.isChild ? "under13" : "over13")) === "under13" ? "13세 미만" : "13세 이상",
+  };
+}
+
+function publicUser(account) {
+  return {
+    id: account.id,
+    name: account.name,
+    grade: account.grade,
+    isChild: account.ageGroup ? account.ageGroup === "under13" : Boolean(account.isChild),
+  };
+}
+
+export async function accountLookup(store, name) {
+  const normalizedName = normalizeName(name);
+  const nameHash = await sha256(normalizedName);
+  const nameKey = `name:${nameHash}`;
+  const mappedId = await store.get(nameKey);
+  const legacyIndexKey = `accounts:${nameHash}`;
+  const indexedKeys = (await store.get(legacyIndexKey, "json")) || [];
+  const keys = [
+    mappedId ? `account-id:${mappedId}` : "",
+    mappedId ? `user:${mappedId}` : "",
+    `account:${nameHash}`,
+    ...indexedKeys.slice(0, MAX_LEGACY_ACCOUNTS_PER_NAME),
+  ].filter(Boolean);
+  const candidates = [];
+  const seenIds = new Set();
+  for (const key of [...new Set(keys)]) {
+    const account = await store.get(key, "json");
+    if (account?.id && !seenIds.has(account.id)) {
+      candidates.push({ account, accountKey: key });
+      seenIds.add(account.id);
+    }
+  }
+  return { normalizedName, nameHash, nameKey, mappedId, candidates };
+}
+
+async function verifyCandidate(candidates, password) {
+  for (const candidate of candidates) {
+    const iterations = candidate.account.iterations ?? passwordPolicy.iterations;
+    if ((await hashPin(password, candidate.account.salt, iterations)) === candidate.account.pinHash) return candidate;
+  }
+  return null;
+}
+
+async function writeCompatibilityIndexes(store, lookup, matched) {
+  const account = { ...matched.account, accountKey: `account-id:${matched.account.id}` };
+  // Copy first, then publish indexes. Existing records and plans are intentionally retained.
+  await store.put(account.accountKey, JSON.stringify(account));
+  await store.put(`user:${account.id}`, JSON.stringify(account));
+  if (!lookup.mappedId) await store.put(lookup.nameKey, account.id);
+  return account;
+}
+
+function invalidCredentials() {
+  return apiError("INVALID_CREDENTIALS", "별명 또는 비밀번호가 올바르지 않습니다.", 401);
+}
+
+export async function loginAccount(context, suppliedBody) {
+  const store = context.env.STUDY_DATA;
+  if (!store) return apiError("STORE_UNAVAILABLE", "서비스 설정을 확인해 주세요.", 503);
+  const name = String(suppliedBody.name || "").trim();
+  const password = String(suppliedBody.password ?? suppliedBody.pin ?? "");
+  if (name.length < NAME_MIN_LENGTH || name.length > NAME_MAX_LENGTH || (!LEGACY_PIN_PATTERN.test(password) && !PASSWORD_PATTERN.test(password))) {
+    return invalidCredentials();
+  }
+  const lookup = await accountLookup(store, name);
+  const matched = await verifyCandidate(lookup.candidates, password);
+  if (!matched) return invalidCredentials();
+
+  const account = await writeCompatibilityIndexes(store, lookup, matched);
+  const token = await createSession(store, account.id);
+  return json({ ok: true, account: publicAccount(account), user: publicUser(account) }, 200, { "set-cookie": sessionCookie(token) });
+}
+
+export async function registerAccount(context, suppliedBody) {
+  const store = context.env.STUDY_DATA;
+  if (!store) return apiError("STORE_UNAVAILABLE", "서비스 설정을 확인해 주세요.", 503);
+  const name = String(suppliedBody.name || "").trim();
+  const password = String(suppliedBody.password ?? suppliedBody.pin ?? "");
+  const passwordConfirm = String(suppliedBody.passwordConfirm ?? "");
+  const grade = String(suppliedBody.grade || "").trim();
+  const ageGroup = String(suppliedBody.ageGroup || "").trim();
+  if (name.length < NAME_MIN_LENGTH || name.length > NAME_MAX_LENGTH) return apiError("INVALID_NAME", `별명은 ${NAME_MIN_LENGTH}~${NAME_MAX_LENGTH}자로 입력해 주세요.`, 400);
+  if (!PASSWORD_PATTERN.test(password)) return apiError("WEAK_PASSWORD", "비밀번호는 영문자·숫자·특수문자를 포함해 8자 이상으로 입력해 주세요.", 400);
+  if (password !== passwordConfirm) return apiError("PASSWORD_MISMATCH", "비밀번호 확인이 일치하지 않습니다.", 400);
+  if (!GRADE_PATTERN.test(grade)) return apiError("INVALID_GRADE", "학년을 선택해 주세요.", 400);
+  if (!AGE_GROUPS.has(ageGroup)) return apiError("INVALID_AGE_GROUP", "연령 구분을 선택해 주세요.", 400);
+
+  const lookup = await accountLookup(store, name);
+  if (lookup.mappedId || lookup.candidates.length) {
+    return apiError("ACCOUNT_ALREADY_EXISTS", "이미 사용 중인 별명입니다. 다른 별명을 사용하거나 로그인해 주세요.", 409);
+  }
+
+  const now = new Date().toISOString();
+  const id = crypto.randomUUID();
+  const salt = crypto.randomUUID();
+  const accountKey = `account-id:${id}`;
+  const account = {
+    id, name, normalizedName: lookup.normalizedName, grade, ageGroup,
+    isChild: ageGroup === "under13", salt,
+    iterations: passwordPolicy.iterations,
+    pinHash: await hashPin(password, salt, passwordPolicy.iterations),
+    createdAt: now, updatedAt: now, schemaVersion: 3, accountKey,
+  };
+  // The name index is written last so partially written accounts are never discoverable.
+  await store.put(accountKey, JSON.stringify(account));
+  await store.put(`user:${id}`, JSON.stringify(account));
+  await store.put(lookup.nameKey, id);
+  const token = await createSession(store, id);
+  return json({ ok: true, account: publicAccount(account), user: publicUser(account) }, 201, { "set-cookie": sessionCookie(token) });
+}
+
+export async function readRequestBody(request) {
+  try {
+    return { body: await request.json() };
+  } catch {
+    return { error: apiError("INVALID_BODY", "입력 내용을 확인해 주세요.", 400) };
+  }
+}
