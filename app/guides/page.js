@@ -26,7 +26,7 @@ export default function GuidesPage() {
         <header className="section-heading">
           <p className="eyebrow">ORIGINAL STUDY GUIDES</p>
           <h1>계획을 세운 다음,<br />어떻게 공부할까요?</h1>
-          <p>공부하자 편집팀이 학생의 실제 시험 준비 과정에서 바로 적용할 수 있도록 작성한 학습 자료입니다. 짧은 요령보다 계획, 실행, 점검이 연결되는 방법을 다룹니다.</p>
+          <p>시험플랜온 편집팀이 학생의 실제 시험 준비 과정에서 바로 적용할 수 있도록 작성한 학습 자료입니다. 짧은 요령보다 계획, 실행, 점검이 연결되는 방법을 다룹니다.</p>
         </header>
         <div className="guide-grid">
           {guides.map((guide) => (

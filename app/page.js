@@ -127,7 +127,7 @@ function DisqusComments() {
     window.disqus_config = function () {
       this.page.url = DISQUS_URL;
       this.page.identifier = "gongbuhaja-community";
-      this.page.title = "공부하자! 이야기 나눔";
+      this.page.title = "시험플랜온 이야기 나눔";
     };
 
     if (window.DISQUS) {
@@ -840,7 +840,7 @@ export default function Home() {
   const exportIcs = (todayOnly = false) => {
     const selected = plan.filter((item) => !todayOnly || item.date === localDateString(new Date()));
     const escape = (value) => String(value).replace(/([,;])/g, "\\$1").replace(/\n/g, "\\n");
-    const body = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//공부하자//Study Plan//KO", ...selected.flatMap((item) => ["BEGIN:VEVENT", `UID:${item.id}@gongbuhaja`, `DTSTART;VALUE=DATE:${item.date.replaceAll("-", "")}`, `SUMMARY:${escape(`${item.subject} ${item.unit || "공부"}`)}`, `DESCRIPTION:${escape(`${item.task} (${item.minutes}분)`)}`, "END:VEVENT"]), "END:VCALENDAR"].join("\r\n");
+    const body = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//시험플랜온//Study Plan//KO", ...selected.flatMap((item) => ["BEGIN:VEVENT", `UID:${item.id}@gongbuhaja`, `DTSTART;VALUE=DATE:${item.date.replaceAll("-", "")}`, `SUMMARY:${escape(`${item.subject} ${item.unit || "공부"}`)}`, `DESCRIPTION:${escape(`${item.task} (${item.minutes}분)`)}`, "END:VEVENT"]), "END:VCALENDAR"].join("\r\n");
     const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([body], { type: "text/calendar;charset=utf-8" })); link.download = todayOnly ? "오늘의-공부.ics" : "시험-공부-계획.ics"; link.click(); URL.revokeObjectURL(link.href);
   };
 
@@ -992,7 +992,7 @@ export default function Home() {
 
   const exportLocalData = () => {
     const payload = { format: "study-flow-local", version: 1, exportedAt: new Date().toISOString(), plans, mistakes };
-    const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" })); link.download = "공부하자-로컬-데이터.json"; link.click(); URL.revokeObjectURL(link.href);
+    const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" })); link.download = "시험플랜온-로컬-데이터.json"; link.click(); URL.revokeObjectURL(link.href);
   };
 
   const importLocalData = async (event) => {
@@ -1001,7 +1001,7 @@ export default function Home() {
       const parsed = JSON.parse(await file.text());
       if (parsed?.format !== "study-flow-local" || !Array.isArray(parsed.plans) || !Array.isArray(parsed.mistakes)) throw new Error();
       setPlans(parsed.plans); setMistakes(parsed.mistakes); localStorage.setItem("study-flow-local-mistakes", JSON.stringify(parsed.mistakes)); setShareStatus("선택한 파일의 로컬 데이터를 가져왔어요.");
-    } catch { setShareStatus("올바른 공부하자 로컬 데이터 파일이 아닙니다."); }
+    } catch { setShareStatus("올바른 시험플랜온 로컬 데이터 파일이 아닙니다."); }
     event.target.value = "";
   };
 
@@ -1139,7 +1139,7 @@ export default function Home() {
 
   const shareCustomPlaylist = async (playlist) => {
     const shareData = {
-      title: `[공부하자!] ${playlist.title}`,
+      title: `[시험플랜온] ${playlist.title}`,
       text: `${playlist.lyrics} 공부 음악 · ${playlist.provider} 플레이리스트`,
       url: playlist.url,
     };
@@ -1171,13 +1171,13 @@ export default function Home() {
       .map((item) => `${item.done ? "✓" : "□"} ${item.label} · ${item.task} (${item.minutes}분)`)
       .join("\n");
     const text = [
-      `[공부하자!] ${savedPlan.name}`,
+      `[시험플랜온] ${savedPlan.name}`,
       `${savedPlan.subject} · 시험일 ${savedPlan.examDate || "미정"}`,
       `범위: ${savedPlan.range}`,
       "",
       schedule,
       "",
-      "공부하자!에서 만든 계획이에요.",
+      "시험플랜온에서 만든 계획이에요.",
     ].join("\n");
     const shareData = {
       title: `${savedPlan.subject} 공부 계획`,
@@ -1264,7 +1264,7 @@ export default function Home() {
         <p className="eyebrow">PARTNERSHIP · CONTACT</p>
         <h1>함께 만들<br />공부의 <em>다음.</em></h1>
         <p className="description">
-          공부하자!와 함께할 아이디어가 있나요?<br />
+          시험플랜온과 함께할 아이디어가 있나요?<br />
           제휴, 콘텐츠, 교육기관 협업 제안을 기다립니다.
         </p>
         <div className="contact-note">
@@ -1312,7 +1312,7 @@ export default function Home() {
           <span>문의 정보가 제출 시 Formspree로 전송되는 개인정보 수집·외부 전송에 동의합니다.</span>
         </label>
         <p className="privacy"><a href="/privacy">개인정보처리방침</a> · 제출 버튼을 누르기 전에는 외부 전송이 발생하지 않습니다.{user?.localOnly && " 보호자와 함께 문의하고 개인 식별 정보를 입력하지 마세요."}</p>
-        <input type="hidden" name="_subject" value="[공부하자!] 새로운 제휴 문의" />
+        <input type="hidden" name="_subject" value="[시험플랜온] 새로운 제휴 문의" />
         {contactMessage && <p className={`form-status ${contactStatus}`} role="status">{contactMessage}</p>}
         <button className="primary-button" type="submit" disabled={contactStatus === "sending"}>
           {contactStatus === "sending" ? "보내는 중..." : "문의 보내기"} <span>→</span>
@@ -1325,8 +1325,15 @@ export default function Home() {
   if (!user && view !== "contact") {
     return (
       <main className="public-home">
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify({
+          "@context": "https://schema.org",
+          "@type": "WebSite",
+          name: "시험플랜온",
+          alternateName: ["시험 플랜온", "무료 시험 공부 플래너"],
+          url: "https://ai-tast.pages.dev/",
+        }) }} />
         <nav className="public-nav" aria-label="주요 메뉴">
-          <a className="brand" href="/">공부<span>하자!</span></a>
+          <a className="brand" href="/">시험<span>플랜온</span></a>
           <div>
             <a href="#planner-start">플래너 시작</a>
             <a href="/guides">학습 가이드</a>
@@ -1362,7 +1369,7 @@ export default function Home() {
           <div className="section-heading">
             <p className="eyebrow">HOW IT WORKS</p>
             <h2 id="method-title">계획이 실제 공부로 이어지도록</h2>
-            <p>많은 계획이 실패하는 이유는 의지가 부족해서가 아니라, 해야 할 일이 너무 크고 모호하기 때문입니다. 공부하자는 범위와 시간을 작은 행동 단위로 바꾸는 데 집중합니다.</p>
+            <p>많은 계획이 실패하는 이유는 의지가 부족해서가 아니라, 해야 할 일이 너무 크고 모호하기 때문입니다. 시험플랜온은 범위와 시간을 작은 행동 단위로 바꾸는 데 집중합니다.</p>
           </div>
           <div className="method-grid">
             <article><b>01</b><h3>범위를 나눕니다</h3><p>단원이나 교재 범위를 쉼표로 구분하면 공부 가능한 날짜에 순서대로 배분합니다. 무엇을 펼쳐야 할지 고민하는 시간을 줄일 수 있습니다.</p></article>
@@ -1395,12 +1402,12 @@ export default function Home() {
         </section>
 
         <footer className="public-footer">
-          <div><a className="brand" href="/">공부<span>하자!</span></a><p>학생이 오늘 할 일을 분명하게 만드는 무료 시험 공부 도구</p></div>
+          <div><a className="brand" href="/">시험<span>플랜온</span></a><p>학생이 오늘 할 일을 분명하게 만드는 무료 시험 공부 도구</p></div>
           <nav aria-label="사이트 정보">
             <a href="/about">소개</a><a href="/guides">학습 가이드</a><a href="/privacy">개인정보처리방침</a><a href="/terms">이용약관</a>
             <button type="button" onClick={() => setView("contact")}>문의</button>
           </nav>
-          <p>© 2026 공부하자. All rights reserved.</p>
+          <p>© 2026 시험플랜온. All rights reserved.</p>
         </footer>
       </main>
     );
@@ -1413,8 +1420,8 @@ export default function Home() {
   return (
     <main>
       <nav className="nav">
-        <button className="brand" onClick={() => setView("form")} aria-label="처음으로">
-          공부<span>하자!</span>
+        <button className="brand" onClick={() => setView("form")} aria-label="시험플랜온 처음으로">
+          시험<span>플랜온</span>
         </button>
         <div className="nav-right">
           <button className="user-badge" onClick={logout}>{user.grade} · {user.displayName} <small>{user.localOnly ? "로컬 종료" : "로그아웃"}</small></button>
@@ -1884,7 +1891,7 @@ export default function Home() {
       {!user.isChild && <DisqusComments />}
 
       <footer>
-        <span>공부하자!</span>
+        <span>시험플랜온</span>
         <nav className="app-footer-links" aria-label="서비스 정보"><a href="/guides">학습 가이드</a><a href="/about">서비스 소개</a><button type="button" onClick={() => setView("contact")}>제휴 문의</button></nav>
         <p>완벽한 계획보다, 오늘의 한 걸음.</p>
       </footer>

@@ -2,7 +2,7 @@ import { SiteFooter, SiteHeader } from "../site-chrome";
 
 export const metadata = {
   title: "개인정보처리방침",
-  description: "공부하자 서비스의 데이터 저장, 외부 서비스와 이용자 권리에 관한 개인정보처리방침입니다.",
+  description: "시험플랜온 서비스의 데이터 저장, 외부 서비스와 이용자 권리에 관한 개인정보처리방침입니다.",
   alternates: { canonical: "/privacy" },
 };
 
@@ -10,7 +10,7 @@ export default function PrivacyPage() {
   return (
     <main className="info-page"><SiteHeader /><article className="info-main article-body">
       <p className="eyebrow">PRIVACY POLICY</p><h1>개인정보처리방침</h1>
-      <p>공부하자는 서비스 제공에 필요한 정보만 처리합니다. 이 방침은 2026년 8월 23일부터 적용됩니다.</p>
+      <p>시험플랜온은 서비스 제공에 필요한 정보만 처리합니다. 이 방침은 2026년 8월 23일부터 적용됩니다.</p>
 
       <h2>1. 플래너에서 처리하는 정보</h2>
       <p><strong>만 14세 이상 서버 계정:</strong> 로그인에만 쓰며 공개하지 않는 고유 로그인 아이디, 중복 가능한 공개 별명, 학년·연령 구분, PBKDF2-SHA256 비밀번호 검증값과 고유 salt, 계정 복구 제한 확인, 계획·완료·실제 공부 시간·오답을 Cloudflare KV에 저장합니다. 비밀번호 원문과 생년월일은 저장하지 않습니다.</p>
