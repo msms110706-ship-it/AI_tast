@@ -371,54 +371,6 @@ function getMathFormulaAnswer(question) {
   return formulas.find((formula) => formula.match.test(text))?.answer || "";
 }
 
-async function getFallbackAnswer(question, selectedSubject) {
-  const inferredSubject = inferQuestionSubject(question, selectedSubject);
-  if (inferredSubject === "수학") {
-    const formulaAnswer = getMathFormulaAnswer(question);
-    if (formulaAnswer) return { answer: formulaAnswer, sources: [], subject: inferredSubject };
-  }
-
-  const searchQuery =
-    question
-      .replace(
-        /(무엇인가요|무엇인가|뭔가요|뭐야|알려\s*줘|알려주세요|설명해\s*줘|설명해주세요|어떤\s*원리로|어떻게\s*일어나나요|의\s*주요\s*업적|주요\s*업적|핵심\s*개념|에\s*대해|\?)/g,
-        " "
-      )
-      .replace(/\s+/g, " ")
-      .trim() || question;
-
-  const endpoint = new URL("https://ko.wikipedia.org/w/api.php");
-  endpoint.search = new URLSearchParams({
-    action: "query",
-    generator: "search",
-    gsrsearch: searchQuery,
-    gsrlimit: "3",
-    prop: "extracts|info",
-    exintro: "1",
-    explaintext: "1",
-    inprop: "url",
-    format: "json",
-    origin: "*",
-  });
-
-  const response = await fetch(endpoint);
-  if (!response.ok) throw new Error("인터넷 자료를 가져오지 못했어요.");
-  const data = await response.json();
-  const pages = Object.values(data.query?.pages || {}).sort((a, b) => (a.index || 0) - (b.index || 0));
-  if (!pages.length) throw new Error("질문과 관련된 자료를 찾지 못했어요. 핵심 낱말을 넣어 다시 질문해주세요.");
-
-  const answer = pages
-    .slice(0, 2)
-    .map((page) => `${page.title}\n${(page.extract || "관련 문서를 확인해보세요.").slice(0, 650)}`)
-    .join("\n\n");
-
-  return {
-    answer: `질문과 가장 관련 있는 인터넷 자료를 정리했어요.\n\n${answer}`,
-    sources: pages.map((page) => ({ title: page.title, url: page.fullurl })).filter((source) => source.url),
-    subject: inferredSubject,
-  };
-}
-
 function formatTimer(seconds) {
   const minute = String(Math.floor(seconds / 60)).padStart(2, "0");
   const second = String(seconds % 60).padStart(2, "0");
@@ -476,6 +428,16 @@ export default function Home() {
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState(null);
   const [answerStatus, setAnswerStatus] = useState("idle");
+  const [coachUsage, setCoachUsage] = useState(null);
+  useEffect(() => {
+    setCoachUsage(null); setAnswer(null);
+    if (!user || user.isChild || user.localOnly) return;
+    let active = true;
+    fetch("/api/coach", { credentials: "same-origin" }).then(async response => {
+      if (response.ok && active) { const result = await response.json(); if (active) setCoachUsage(result); }
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [user?.id, user?.isChild, user?.localOnly]);
   const [sharedPlans, setSharedPlans] = useState([]);
   const sharedPlansRef = useRef([]);
   const [communityGrade, setCommunityGrade] = useState("전체");
@@ -1028,44 +990,29 @@ export default function Home() {
 
   const askCoach = async (event) => {
     event.preventDefault();
-    if (user?.isChild) { setAnswer({ text: "만 14세 미만 이용 모드에서는 질문을 외부 서비스로 전송하지 않습니다.", sources: [] }); setAnswerStatus("error"); return; }
+    if (user?.isChild || user?.localOnly) {
+      setAnswer({ mode: "builtin", answer: getMathFormulaAnswer(question) || "로컬 모드에서는 질문이 외부 서비스로 전송되지 않습니다. 위의 내장 도움말과 교과서를 확인해 주세요.", sources: [] });
+      setAnswerStatus("success"); return;
+    }
     const trimmedQuestion = question.trim();
     if (!trimmedQuestion || answerStatus === "loading") return;
-
-    setAnswerStatus("loading");
-    setAnswer(null);
-
+    setAnswerStatus("loading"); setAnswer(null);
     try {
-      const selectedSubject = activePlan?.subject || subject;
-      let result;
-
-      try {
-        const response = await fetch("/api/coach", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            question: trimmedQuestion,
-            subject: selectedSubject,
-            range: activePlan?.range || range,
-            grade: activePlan?.grade || user?.grade || grade,
-          }),
-        });
-        const contentType = response.headers.get("content-type") || "";
-        if (!contentType.includes("application/json")) throw new Error("API_UNAVAILABLE");
-        const apiResult = await response.json();
-        if (!response.ok) throw new Error(apiResult.error || "API_UNAVAILABLE");
-        result = { ...apiResult, subject: apiResult.subject || inferQuestionSubject(trimmedQuestion, selectedSubject) };
-      } catch {
-        result = await getFallbackAnswer(trimmedQuestion, selectedSubject);
-      }
-
-      setAnswer(result);
-      setAnswerStatus("success");
-    } catch (requestError) {
-      setAnswer({
-        answer: requestError.message || "잠시 후 다시 질문해주세요.",
-        sources: [],
+      const response = await fetch("/api/coach", {
+        method: "POST", credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ requestId: crypto.randomUUID(), question: trimmedQuestion, subject: activePlan?.subject || subject,
+          range: activePlan?.range || range, grade: activePlan?.grade || user?.grade || grade }),
       });
+      const result = await response.json();
+      if (result.remainingAiQuestions !== undefined) setCoachUsage(result);
+      if (!response.ok) {
+        setAnswer({ ...result, answer: (result.error?.message || "잠시 후 다시 질문해 주세요.") + (result.retryAfter ? ` ${result.retryAfter}초 후 재시도할 수 있습니다.` : ""), sources: [] });
+        setAnswerStatus("error"); return;
+      }
+      setAnswer(result); setAnswerStatus("success");
+    } catch {
+      setAnswer({ answer: "자료를 가져오지 못했습니다. 잠시 후 다시 질문해 주세요.", sources: [] });
       setAnswerStatus("error");
     }
   };
@@ -1828,6 +1775,17 @@ export default function Home() {
                 <strong>{studyHelp.questions[questionIndex % studyHelp.questions.length]}</strong>
               </div>
               <button className="question-button" onClick={() => setQuestionIndex((index) => index + 1)}>다른 질문 받기 ↻</button>
+              {user.isChild || user.localOnly ? <p>로컬 모드에서는 질문이 외부 서비스로 전송되지 않습니다</p> : <div aria-live="polite">
+                <p>현재 요금제: {coachUsage?.plan === "premium" ? "프리미엄" : "무료"}</p>
+                <p>{coachUsage ? `오늘의 AI 호출 시도 ${coachUsage.usedAiQuestions}/${coachUsage.dailyAiLimit}회 사용` : "오늘의 AI 사용량 확인 중"}</p>
+                {coachUsage?.plan === "premium" && <p>이번 달 AI 호출 시도 {coachUsage.monthlyUsedAiQuestions}/{coachUsage.monthlyAiLimit}회 사용</p>}
+                <p>{coachUsage?.plan === "premium" ? `AI 답변 월 ${coachUsage.monthlyAiLimit}회·하루 최대 ${coachUsage.dailyAiLimit}회, 이후 Wikipedia 자료 제공` : `AI 답변 하루 ${coachUsage?.dailyAiLimit || 3}회, 이후 Wikipedia 자료 제공`}</p>
+                <p>프리미엄 준비 중 · AI 답변 월 100회·하루 최대 20회</p>
+                <button type="button" disabled>프리미엄 준비 중</button>
+                <p>호출 시도는 오류나 시간 초과에도 사용 횟수에 포함됩니다. AI 답변은 틀릴 수 있습니다. 교과서와 교사의 안내를 우선하세요.</p>
+                {coachUsage?.remainingAiQuestions === 0 && <p>{coachUsage.plan === "premium" ? "AI 답변 사용 한도에 도달하여 Wikipedia 자료로 안내합니다" : "오늘의 AI 답변을 모두 사용하여 Wikipedia 자료로 안내합니다"}</p>}
+                {coachUsage?.resetAt && <small>일일 한도 갱신: {new Date(coachUsage.resetAt).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })} (한국 시간)</small>}
+              </div>}
               <form className="ask-form" onSubmit={askCoach}>
                 <label>
                   <span>{activePlan?.subject || subject}에 대해 질문하기</span>
@@ -1835,16 +1793,18 @@ export default function Home() {
                     value={question}
                     onChange={(event) => setQuestion(event.target.value)}
                     placeholder={getQuestionPlaceholder(activePlan?.subject || subject)}
-                    maxLength={1000}
+                    maxLength={500}
                   />
                 </label>
                 <button type="submit" disabled={answerStatus === "loading"}>
-                  {answerStatus === "loading" ? "찾는 중…" : "답변 받기"}
+                  {answerStatus === "loading" ? "찾는 중…" : user.isChild || user.localOnly ? "내장 도움말 보기" : coachUsage?.remainingAiQuestions === 0 ? "Wikipedia에 질문하기" : "답변 받기"}
                 </button>
               </form>
               {answer && (
                 <div className={`coach-answer ${answerStatus === "error" ? "error" : ""}`}>
                   <b>{answerStatus === "error" ? "자료를 찾지 못했어요" : `${answer.subject || activePlan?.subject || subject} 코치의 답변`}</b>
+                  {answer.mode && <span>{answer.mode === "ai" ? "AI 생성 답변" : answer.mode === "wikipedia" ? "Wikipedia 기반 자료" : "내장 도움말"}</span>}
+                  {answer.retrievedAt && <small>조회 시각: {new Date(answer.retrievedAt).toLocaleString("ko-KR")}</small>}
                   <p>{answer.answer}</p>
                   {answer.sources?.length > 0 && (
                     <div className="answer-sources">

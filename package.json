@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build && node scripts/package-output.mjs",
-    "test": "node tests/account.test.mjs && playwright test",
+    "test": "node tests/account.test.mjs && node tests/coach.test.mjs && playwright test",
     "test:browser": "playwright test",
     "account:cleanup": "node scripts/cleanup-account.mjs",
     "account:audit": "node scripts/audit-study-data.mjs",

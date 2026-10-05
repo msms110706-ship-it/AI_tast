@@ -1,235 +1,28 @@
-const json = (data, status = 200) =>
-  new Response(JSON.stringify(data), {
-    status,
-    headers: { "content-type": "application/json; charset=utf-8" },
-  });
-
-function collectSources(response) {
-  const sources = [];
-  for (const item of response.output || []) {
-    for (const content of item.content || []) {
-      for (const annotation of content.annotations || []) {
-        const citation = annotation.url_citation || annotation;
-        if (citation.url && !sources.some((source) => source.url === citation.url)) {
-          sources.push({ url: citation.url, title: citation.title || "" });
-        }
-      }
-    }
-  }
-  return sources.slice(0, 5);
-}
-
-const encoder = new TextEncoder();
-const bytesToHex = (bytes) => Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
-
-async function sha256(value) {
-  return bytesToHex(await crypto.subtle.digest("SHA-256", encoder.encode(value)));
-}
-
-async function hashPin(pin, salt) {
-  const key = await crypto.subtle.importKey("raw", encoder.encode(pin), "PBKDF2", false, ["deriveBits"]);
-  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: encoder.encode(salt), iterations: 100000 }, key, 256);
-  return bytesToHex(bits);
-}
-
-function dataStore(env) {
-  return env?.STUDY_DATA || env?.STUDY_PLANS;
-}
-
-function normalizeName(value) {
-  return value.normalize("NFKC").trim().toLocaleLowerCase("ko-KR").replace(/\s+/g, " ");
-}
-
-async function account(request, env) {
-  const store = dataStore(env);
-  if (!store) return json({ ok: false, error: "계정 저장소가 아직 연결되지 않았어요. 관리자에게 STUDY_DATA 설정을 요청해주세요." }, 503);
-  let body;
-  try { body = await request.json(); } catch { return json({ ok: false, error: "로그인 형식이 올바르지 않아요." }, 400); }
-  const name = String(body.name || "").trim().slice(0, 30);
-  const normalized = normalizeName(name);
-  const pin = String(body.pin || "");
-  const grade = String(body.grade || "").trim();
-  if (name.length < 2 || pin.length < 6 || pin.length > 64 || /\s/.test(pin)) return json({ ok: false, error: "별명은 2자 이상, 비밀번호는 공백 없이 6~64자로 입력해주세요." }, 400);
-  if (!/^(초[4-6]|중[1-3]|고[1-3])$/.test(grade)) return json({ ok: false, error: "학년을 확인해주세요." }, 400);
-
-  const accountKey = `account:${await sha256(normalized)}`;
-  let saved = await store.get(accountKey, "json");
-  if (!saved) {
-    if (!/^(?=.*[A-Za-z])(?=.*\d)(?=.*[^A-Za-z\d\s])\S{8,64}$/.test(pin)) {
-      return json({ ok: false, error: "새 비밀번호는 영문자·숫자·특수문자를 모두 포함해 8자 이상으로 만들어주세요." }, 400);
-    }
-    const salt = crypto.randomUUID();
-    saved = { id: crypto.randomUUID(), name, grade, isChild: grade.startsWith("초") || body.isUnder13 === true, salt, iterations: 100000, pinHash: await hashPin(pin, salt), createdAt: new Date().toISOString() };
-    await store.put(accountKey, JSON.stringify(saved));
-  } else if ((await hashPin(pin, saved.salt)) !== saved.pinHash) {
-    return json({ ok: false, error: "이미 사용 중인 별명이거나 로그인 코드가 다릅니다." }, 401);
-  }
-
-  const token = crypto.randomUUID() + crypto.randomUUID().replaceAll("-", "");
-  await store.put(`session:${await sha256(token)}`, saved.id, { expirationTtl: 2_592_000 });
-  return json({ ok: true, token, user: { id: saved.id, name: saved.name, grade: saved.grade, isChild: saved.isChild }, account: { nickname: saved.name, grade: saved.grade, ageGroup: saved.isChild ? "under13" : "over13" } });
-}
-
-async function sessionUserId(request, store) {
-  const authorization = request.headers.get("authorization") || "";
-  const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
-  if (!token) return null;
-  return store.get(`session:${await sha256(token)}`);
-}
-
-async function logout(request, env) {
-  const store = dataStore(env);
-  if (!store) return json({ ok: false, error: "계정 저장소가 연결되지 않았습니다." }, 503);
-  const authorization = request.headers.get("authorization") || "";
-  const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
-  if (!token) return json({ ok: false, error: "인증 정보가 없습니다." }, 401);
-  await store.delete(`session:${await sha256(token)}`);
-  return json({ ok: true });
-}
-
-async function syncPlans(request, env) {
-  const store = dataStore(env);
-  if (!store) return json({ error: "계정 저장소가 연결되지 않았어요." }, 503);
-  const userId = await sessionUserId(request, store);
-  if (!userId) return json({ error: "로그인이 만료되었습니다. 다시 로그인해주세요." }, 401);
-  const key = `plans:${userId}`;
-  if (request.method === "GET") return json({ plans: (await store.get(key, "json")) || [] });
-  if (request.method !== "PUT") return json({ error: "GET 또는 PUT 요청만 지원해요." }, 405);
-  let body;
-  try { body = await request.json(); } catch { return json({ error: "계획 형식이 올바르지 않아요." }, 400); }
-  if (!Array.isArray(body.plans) || body.plans.length > 100) return json({ error: "저장할 계획 목록을 확인해주세요." }, 400);
-  const serialized = JSON.stringify(body.plans);
-  if (serialized.length > 1_500_000) return json({ error: "계획 저장 용량을 초과했어요." }, 413);
-  await store.put(key, serialized);
-  return json({ ok: true, savedAt: new Date().toISOString() });
-}
-
-async function answerQuestion(request, env) {
-  if (!env?.OPENAI_API_KEY) {
-    return json(
-      { error: "인터넷 답변 기능을 사용하려면 사이트에 OPENAI_API_KEY를 등록해야 해요." },
-      503
-    );
-  }
-
-  let body;
-  try {
-    body = await request.json();
-  } catch {
-    return json({ error: "질문 형식이 올바르지 않아요." }, 400);
-  }
-
-  const question = String(body.question || "").trim();
-  const subject = String(body.subject || "일반").trim().slice(0, 80);
-  const range = String(body.range || "").trim().slice(0, 500);
-  const grade = String(body.grade || "").trim().slice(0, 30);
-
-  if (!question) return json({ error: "질문을 입력해주세요." }, 400);
-  if (question.length > 1000) return json({ error: "질문은 1,000자 이내로 입력해주세요." }, 400);
-
-  const prompt = `너는 한국 학생을 위한 정확하고 친절한 과목별 질문 답변 코치다.
-선택된 공부 과목: ${subject}
-학생 학년: ${grade || "미지정"}
-공부 범위: ${range || "미지정"}
-
-학생이 묻는 내용에 직접 답하라. 공부 습관이나 동기부여 조언으로 질문을 회피하지 마라.
-- 먼저 질문 자체의 실제 과목을 판별하라. 질문 내용과 선택된 공부 과목이 다르면 질문 내용을 우선하고, 선택 과목을 억지로 연결하지 마라.
-- 수학: 필요한 공식의 이름과 식, 기호의 뜻, 적용 조건을 먼저 제시하고 풀이 방향을 단계별로 설명한다.
-- 역사/한국사: 인물·사건의 시대, 핵심 사실, 원인과 영향 또는 의의를 설명한다.
-- 과학: 핵심 개념, 원리, 인과관계와 적절한 예시를 설명한다.
-- 국어/영어/사회 및 기타 과목: 질문에 맞는 개념, 근거, 예시를 제시한다.
-- 최신 정보나 사실 확인이 필요한 내용은 웹 검색 결과를 근거로 답한다.
-- 학생의 학년 수준에 맞는 한국어를 사용한다.
-- 확실하지 않은 내용은 추측하지 말고 불확실성을 밝힌다.
-- 답변은 핵심부터 시작하고, 보통 3~7개의 짧은 문단이나 단계로 작성한다.
-- 웹에서 확인한 사실에는 제공되는 출처 인용을 유지한다.`;
-
-  const apiResponse = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${env.OPENAI_API_KEY}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      model: env.OPENAI_MODEL || "gpt-5.6-luna",
-      reasoning: { effort: "low" },
-      tools: [{ type: "web_search" }],
-      tool_choice: "auto",
-      input: [
-        { role: "system", content: [{ type: "input_text", text: prompt }] },
-        { role: "user", content: [{ type: "input_text", text: question }] },
-      ],
-      text: { verbosity: "medium" },
-    }),
-  });
-
-  const response = await apiResponse.json();
-  if (!apiResponse.ok) {
-    console.error("OpenAI response error", apiResponse.status, response?.error?.code);
-    return json({ error: "인터넷 자료를 확인하는 중 오류가 발생했어요. 잠시 후 다시 시도해주세요." }, 502);
-  }
-
-  const answer =
-    response.output_text ||
-    response.output
-      ?.flatMap((item) => item.content || [])
-      .filter((content) => content.type === "output_text")
-      .map((content) => content.text)
-      .join("\n");
-
-  if (!answer) return json({ error: "답변을 만들지 못했어요. 질문을 조금 더 구체적으로 적어주세요." }, 502);
-  return json({ answer, sources: collectSources(response) });
-}
-
+import { onRequest as account } from '../functions/api/account.js';
+import { onRequest as login } from '../functions/api/account/login.js';
+import { onRequest as register } from '../functions/api/account/register.js';
+import { onRequest as me } from '../functions/api/account/me.js';
+import { onRequest as logout } from '../functions/api/logout.js';
+import { onRequest as accountLogout } from '../functions/api/account/logout.js';
+import { onRequest as sync } from '../functions/api/sync.js';
+import { onRequest as sessions } from '../functions/api/sessions.js';
+import { onRequest as mistakes } from '../functions/api/mistakes.js';
+import { onRequest as coach } from '../functions/api/coach.js';
+import { onRequest as webhook } from '../functions/api/billing/webhook.js';
+import { onRequest as middleware } from '../functions/_middleware.js';
+import { apiError } from '../functions/_lib/http.js';
+const routes = { '/api/account': account, '/api/account/login': login, '/api/account/register': register, '/api/account/me': me, '/api/account/logout': accountLogout, '/api/logout': logout, '/api/sync': sync, '/api/sessions': sessions, '/api/mistakes': mistakes, '/api/coach': coach, '/api/billing/webhook': webhook };
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    const pathname = url.pathname === "/" ? "/" : url.pathname.replace(/\/+$/, "");
-    if (pathname === "/ads.txt") {
-      return new Response(
-        "google.com, pub-3450079984401603, DIRECT, f08c47fec0942fa0\n",
-        {
-          headers: {
-            "content-type": "text/plain; charset=utf-8",
-            "cache-control": "public, max-age=3600",
-          },
-        }
-      );
-    }
-    if (pathname === "/api/coach") {
-      if (request.method !== "POST") return json({ error: "POST 요청만 지원해요." }, 405);
-      return answerQuestion(request, env);
-    }
-    if (pathname === "/api/account") {
-      if (request.method !== "POST") return json({ ok: false, error: "POST 요청만 지원합니다." }, 405);
-      try {
-        return await account(request, env);
-      } catch (error) {
-        console.error("Account API error", error instanceof Error ? error.message : "unknown");
-        return json({ ok: false, error: "계정 처리 중 오류가 발생했습니다." }, 500);
-      }
-    }
-    if (pathname === "/api/sync") return syncPlans(request, env);
-    if (pathname === "/api/logout") {
-      if (request.method !== "POST") return json({ ok: false, error: "POST 요청만 지원합니다." }, 405);
-      try {
-        return await logout(request, env);
-      } catch (error) {
-        console.error("Logout API error", error instanceof Error ? error.message : "unknown");
-        return json({ ok: false, error: "로그아웃 처리 중 오류가 발생했습니다." }, 500);
-      }
-    }
-    if (env?.ASSETS?.fetch) {
-      const assetUrl = new URL(url);
-      if (assetUrl.pathname === "/") {
-        assetUrl.pathname = "/index.html";
-      } else if (!assetUrl.pathname.includes(".")) {
-        assetUrl.pathname = `${assetUrl.pathname.replace(/\/$/, "")}/index.html`;
-      }
-      return env.ASSETS.fetch(new Request(assetUrl, request));
-    }
-    return new Response("Study planner is ready.", {
-      headers: { "content-type": "text/plain; charset=utf-8" }
-    });
-  }
+    const path = url.pathname.replace(/\/+$/, '') || '/';
+    return middleware({ request, env, next: async () => {
+      if (routes[path]) return routes[path]({ request, env });
+      if (path.startsWith('/api/')) return apiError('NOT_FOUND', '지원하지 않는 요청입니다.', 404);
+      if (!env.ASSETS?.fetch) return new Response('Not found', { status: 404 });
+      if (path === '/') url.pathname = '/index.html';
+      else if (!path.includes('.')) url.pathname = `${path}/index.html`;
+      return env.ASSETS.fetch(new Request(url, request));
+    } });
+  },
 };

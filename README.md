@@ -15,3 +15,5 @@ Next.js 기반 시험 공부 플래너입니다.
 - 운영 계정 정리는 [docs/account-cleanup.md](docs/account-cleanup.md)의 기본 dry-run 도구를 사용하며, 승인 전 실제 삭제를 실행하지 않습니다.
 - 계정 API는 `POST /api/account/login`, `POST /api/account/register`, `POST /api/account/logout`, `GET /api/account/me`로 분리되어 있습니다. 기존 `/api/account`는 명시적인 `action`이 있는 요청만 호환 처리합니다.
 - Cloudflare Pages는 프로젝트 루트의 `functions`를 파일 기반 Pages Functions로 배포합니다. Build output directory는 `out`을 사용하며, `_worker.js`를 함께 두면 `functions` 폴더가 무시되므로 생성하지 않습니다.
+
+학습 코치의 무료/프리미엄 한도, 결제 비활성 상태, 환경 변수와 원자성 제한은 [운영 준비 문서](docs/coach-billing.md)를 확인하세요. 코치 소스는 `functions/_lib/coach.js`, 별도 호스팅 진입점은 `server/index.js`이며 빌드 산출물을 직접 수정하지 않습니다.

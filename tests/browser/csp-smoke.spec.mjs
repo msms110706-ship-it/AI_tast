@@ -1,5 +1,9 @@
 import { expect, test } from "@playwright/test";
 
+test.beforeEach(async ({ page }) => {
+  await page.route('**/*', route => new URL(route.request().url()).hostname === '127.0.0.1' ? route.continue() : route.abort());
+});
+
 test("homepage hydrates and core controls remain interactive without CSP blocks", async ({ page }) => {
   const cspErrors = [];
   page.on("console", (message) => {
